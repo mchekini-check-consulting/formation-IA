@@ -1,0 +1,74 @@
+# Infrastructure Nova — formation IA
+# docker compose up -d
+services:
+
+  postgres:
+    image: pgvector/pgvector:pg16
+    container_name: nova-postgres
+    environment:
+      POSTGRES_DB: nova
+      POSTGRES_USER: nova
+      POSTGRES_PASSWORD: nova
+    ports:
+      - "5432:5432"
+    volumes:
+      - nova-data:/var/lib/postgresql/data
+      # Les scripts seed/*.sql sont exécutés au premier démarrage (ordre alphabétique)
+      - ./seed:/docker-entrypoint-initdb.d:ro
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U nova -d nova"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+    restart: unless-stopped
+
+  keycloak:
+    image: quay.io/keycloak/keycloak:26.0
+    container_name: nova-keycloak
+    command: start-dev
+    environment:
+      KC_BOOTSTRAP_ADMIN_USERNAME: admin
+      KC_BOOTSTRAP_ADMIN_PASSWORD: admin
+      KC_HTTP_PORT: 8080
+    ports:
+      - "8888:8080"
+    restart: unless-stopped
+
+  redis:
+    image: redis:7-alpine
+    container_name: nova-redis
+    ports:
+      - "6379:6379"
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+    restart: unless-stopped
+
+  langfuse:
+    image: langfuse/langfuse:2
+    container_name: nova-langfuse
+    environment:
+      DATABASE_URL: postgresql://nova:nova@postgres:5432/langfuse
+      NEXTAUTH_URL: http://localhost:3002
+      NEXTAUTH_SECRET: nova-formation-secret-nextauth
+      SALT: nova-formation-salt
+      TELEMETRY_ENABLED: "false"
+    ports:
+      - "3002:3000"
+    depends_on:
+      postgres:
+        condition: service_healthy
+    restart: unless-stopped
+
+  # L'application Spring Boot + Spring AI sera ajoutée ici en phase 1
+  # app:
+  #   build: .
+  #   ports: ["8080:8080"]
+  #   environment:
+  #     SPRING_DATASOURCE_URL: jdbc:postgresql://postgres:5432/nova
+  #     ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY:-}
+
+volumes:
+  nova-data:

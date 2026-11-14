@@ -1,0 +1,245 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Nova — Assistant</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Sora:wght@400;600;700&family=Archivo:wght@400;500;600&display=swap" rel="stylesheet">
+<style>
+  :root {
+    --nuit: #181133;
+    --violet: #5536B5;
+    --violet-doux: #EDE9FA;
+    --or: #E28F15;
+    --fond: #F7F6FB;
+    --texte: #231A45;
+    --texte-doux: #6A6484;
+    --blanc: #FFFFFF;
+  }
+
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+
+  body {
+    font-family: "Archivo", system-ui, sans-serif;
+    background: var(--fond);
+    color: var(--texte);
+    min-height: 100vh;
+    display: flex;
+    flex-direction: column;
+  }
+
+  .page {
+    max-width: 760px; width: 100%;
+    margin: 0 auto;
+    padding: 36px 20px 24px;
+    display: flex; flex-direction: column;
+    flex: 1;
+  }
+
+  header { display: flex; align-items: center; gap: 13px; margin-bottom: 22px; }
+
+  .logo {
+    width: 42px; height: 42px; border-radius: 12px;
+    background: linear-gradient(135deg, var(--violet), var(--nuit));
+    display: grid; place-items: center;
+    color: var(--blanc); font-family: "Sora", sans-serif; font-weight: 700; font-size: 21px;
+  }
+  .logo::after { content: "N"; }
+
+  header h1 { font-family: "Sora", sans-serif; font-size: 20px; font-weight: 700; }
+  header p { font-size: 12.5px; color: var(--texte-doux); }
+
+  .messages {
+    flex: 1;
+    display: flex; flex-direction: column; gap: 12px;
+    padding: 4px 2px 16px;
+    overflow-y: auto;
+  }
+
+  .vide {
+    margin: auto; text-align: center; color: var(--texte-doux); font-size: 14px;
+    line-height: 1.7; max-width: 420px;
+  }
+  .vide strong { color: var(--texte); }
+
+  .message { max-width: 85%; }
+  .message.utilisateur { align-self: flex-end; }
+  .message.assistant { align-self: flex-start; }
+
+  .bulle {
+    border-radius: 14px; padding: 11px 15px; font-size: 14.5px; line-height: 1.6;
+    white-space: pre-wrap;
+  }
+  .message.utilisateur .bulle { background: var(--violet); color: var(--blanc); border-bottom-right-radius: 4px; }
+  .message.assistant .bulle { background: var(--blanc); border: 1px solid #E6E2F2; border-bottom-left-radius: 4px; }
+  .attente { color: var(--texte-doux); font-style: italic; }
+
+  form {
+    display: flex; gap: 10px;
+    padding-top: 14px;
+    border-top: 1px solid #E6E2F2;
+  }
+
+  input[type="text"] {
+    flex: 1; font-family: inherit; font-size: 14.5px;
+    border: 1px solid #D9D4E8; border-radius: 10px; padding: 12px 15px;
+    background: var(--blanc);
+  }
+  input:focus-visible, button:focus-visible { outline: 2px solid var(--violet); outline-offset: 1px; }
+
+  button {
+    font-family: inherit; font-size: 14.5px; font-weight: 600; color: var(--blanc);
+    background: var(--violet); border: none; border-radius: 10px;
+    padding: 12px 24px; cursor: pointer;
+  }
+  button:hover { background: var(--nuit); }
+  button:disabled { opacity: .5; cursor: wait; }
+
+  footer { text-align: center; font-size: 11.5px; color: var(--texte-doux); padding: 10px 0 4px; }
+
+  /* ---------- Interrupteur prompt système (étape 7) ---------- */
+  .interrupteur {
+    margin-left: auto;
+    display: flex; align-items: center; gap: 9px;
+    font-size: 12.5px; color: var(--texte-doux);
+    cursor: pointer; user-select: none;
+  }
+
+  .interrupteur input { display: none; }
+
+  .glissiere {
+    width: 40px; height: 22px; border-radius: 999px;
+    background: #CFC9E2; position: relative; transition: background .15s;
+  }
+  .glissiere::after {
+    content: ""; position: absolute; top: 3px; left: 3px;
+    width: 16px; height: 16px; border-radius: 50%;
+    background: var(--blanc); transition: left .15s;
+  }
+  .interrupteur input:checked + .glissiere { background: var(--violet); }
+  .interrupteur input:checked + .glissiere::after { left: 21px; }
+
+  .etat-mode {
+    font-family: "Sora", sans-serif; font-size: 11px; font-weight: 600;
+    border-radius: 999px; padding: 3px 11px;
+  }
+  .etat-mode.actif { background: var(--violet-doux); color: var(--violet); }
+  .etat-mode.brut { background: #FDF0DC; color: var(--or); }
+
+  .effacer {
+    font-family: inherit; font-size: 12.5px; font-weight: 500;
+    color: var(--texte-doux); background: none;
+    border: 1px solid #D9D4E8; border-radius: 8px;
+    padding: 6px 13px; cursor: pointer;
+  }
+  .effacer:hover { color: var(--violet); border-color: var(--violet); background: var(--violet-doux); }
+</style>
+</head>
+<body>
+<div class="page">
+  <header>
+    <div class="logo" aria-hidden="true"></div>
+    <div>
+      <h1>Nova — Assistant</h1>
+      <p>Étape 7 : interrupteur de démo — prompt système on/off</p>
+    </div>
+    <label class="interrupteur" title="Activer/désactiver le prompt système Nova (identité, périmètre, ton)">
+      <span class="etat-mode actif" id="etat-mode">Prompt système actif</span>
+      <input type="checkbox" id="prompt-actif" checked>
+      <span class="glissiere" aria-hidden="true"></span>
+    </label>
+    <button type="button" class="effacer" id="btn-effacer" style="margin-left:12px"
+            title="Vider l'historique envoyé au modèle et repartir de zéro">
+      Nouvelle conversation
+    </button>
+  </header>
+
+  <div class="messages" id="messages">
+    <div class="vide" id="vide">
+      <strong>Basculez l'interrupteur en haut à droite pour la démo.</strong><br>
+      Prompt système <em>actif</em> : l'assistant est Nova (identité, périmètre, ton).<br>
+      Prompt système <em>désactivé</em> : retour au modèle brut de l'étape 5 —
+      posez « Qui es-tu ? » ou la question SpeedColis dans les deux modes.
+    </div>
+  </div>
+
+  <form id="form-chat">
+    <input type="text" id="question" placeholder="Votre message…" autocomplete="off" required>
+    <button type="submit" id="btn">Envoyer</button>
+  </form>
+
+  <footer>Nova Assistant · Claude (API Anthropic) · formation « Fondamentaux de l'IA »</footer>
+</div>
+
+<script>
+  const $ = (id) => document.getElementById(id);
+  let historique = [];   // paires {question, reponse} pour le multi-tours
+
+  function ajouterMessage(role, texte) {
+    const vide = $("vide");
+    if (vide) vide.remove();
+    const msg = document.createElement("div");
+    msg.className = "message " + role;
+    const bulle = document.createElement("div");
+    bulle.className = "bulle";
+    bulle.textContent = texte;
+    msg.appendChild(bulle);
+    $("messages").appendChild(msg);
+    msg.scrollIntoView({ behavior: "smooth", block: "end" });
+    return msg;
+  }
+
+  // Nouvelle conversation : vide l'historique (modèle + affichage)
+  $("btn-effacer").addEventListener("click", () => {
+    historique = [];
+    $("messages").innerHTML = `
+      <div class="vide" id="vide">
+        <strong>Nouvelle conversation.</strong><br>
+        L'historique a été vidé — le modèle repart de zéro, sans aucun souvenir
+        des échanges précédents.
+      </div>`;
+    $("question").focus();
+  });
+
+  // Interrupteur de démo : met à jour la pastille d'état
+  $("prompt-actif").addEventListener("change", () => {
+    const actif = $("prompt-actif").checked;
+    const etat = $("etat-mode");
+    etat.textContent = actif ? "Prompt système actif" : "Mode brut (sans prompt)";
+    etat.className = "etat-mode " + (actif ? "actif" : "brut");
+  });
+
+  $("form-chat").addEventListener("submit", async (e) => {
+    e.preventDefault();
+    const question = $("question").value.trim();
+    if (!question) return;
+    $("question").value = "";
+    $("btn").disabled = true;
+
+    ajouterMessage("utilisateur", question);
+    const enCours = ajouterMessage("assistant", "");
+    enCours.querySelector(".bulle").innerHTML = '<span class="attente">Génération…</span>';
+
+    try {
+      const rep = await fetch("/api/chat", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ question, historique,
+          sansPromptSysteme: !$("prompt-actif").checked }),
+      });
+      if (!rep.ok) throw new Error("HTTP " + rep.status);
+      const d = await rep.json();
+      enCours.querySelector(".bulle").textContent = d.reponse;
+      historique.push({ question, reponse: d.reponse });
+    } catch (err) {
+      enCours.querySelector(".bulle").textContent = "Erreur : " + err.message;
+    } finally {
+      $("btn").disabled = false;
+      $("question").focus();
+    }
+  });
+</script>
+</body>
+</html>
