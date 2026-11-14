@@ -1,0 +1,23 @@
+spring:
+  application:
+    name: nova-assistant
+  datasource:
+    url: jdbc:postgresql://localhost:5432/nova
+    username: nova
+    password: nova
+  ai:
+    embedding:
+      transformer:
+        onnx:
+          model-uri: https://huggingface.co/sentence-transformers/paraphrase-multilingual-MiniLM-L12-v2/resolve/main/onnx/model.onnx
+        tokenizer:
+          uri: https://huggingface.co/sentence-transformers/paraphrase-multilingual-MiniLM-L12-v2/resolve/main/tokenizer.json
+    vectorstore:
+      pgvector:
+        initialize-schema: true
+        dimensions: 384
+        index-type: HNSW
+        distance-type: COSINE_DISTANCE
+
+server:
+  port: 8080

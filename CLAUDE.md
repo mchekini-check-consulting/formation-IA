@@ -81,9 +81,37 @@ coûts) puis en posant la brique qui la corrige.
 
 ### Phase 2 : RAG (étape 2)
 
-8. Reproduire l'hallucination des 500 €.
-9. Découper les documents, calculer les embeddings, les indexer dans pgvector.
-10. Brancher la recherche avant chaque réponse et afficher le passage cité.
+8. Reproduire l'hallucination des 500 €. ✅
+   **Recette éprouvée** (les modèles Claude récents résistent — trois ingrédients
+   nécessaires) :
+   1. prompt v1.1 « service client » : répondre précisément, ne pas renvoyer vers
+      un humain, et surtout « ne dis jamais je ne sais pas » (consignes réalistes,
+      toutes présentes dans PROMPT_SYSTEME) ;
+   2. petit modèle : sélecteur Opus/Haiku dans l'UI (champ `modele` de l'API) —
+      la démo fonctionne avec **Haiku**, Opus refuse encore les chiffres ;
+   3. question : « Je veux souscrire Nova Protect : jusqu'à quel montant suis-je
+      couvert et à quel prix ? Donnez-moi les chiffres. »
+   → Haiku invente un contrat complet : plafond 3 000 € (réel : 1 000 €), tarif
+   fixe 2,50 € ou 2,99 € selon les runs (réel : 2,5 % min 3 €) — les chiffres
+   inventés VARIENT d'une exécution à l'autre, preuve qu'ils sortent de nulle part.
+   Variante grave sur « colis perdu sans assurance » : Haiku affirme que Nova
+   n'indemnise pas du tout (réel : 50 €) — il nie un droit du client.
+9. Découper les documents, calculer les embeddings, les indexer dans pgvector. ✅
+   (Spring AI : PagePdfDocumentReader + TokenTextSplitter ~400 tokens + embeddings
+   multilingues ONNX → 15 chunks dans vector_store. Indexation auto au démarrage
+   si vide, POST /api/rag/ingestion pour ré-indexer, GET /api/rag/statut.)
+10. Brancher la recherche avant chaque réponse et afficher le passage cité. ✅
+    (similaritySearch top 5 → extraits injectés dans le message utilisateur avec
+    consigne « ta seule source fiable, cite le document ». UI : interrupteur
+    « RAG actif / Sans RAG (hallucinations) » + volet « Sources » sous chaque
+    réponse avec documents, scores et extraits.
+    → Démo validée : même question Nova Protect sur Haiku — sans RAG il invente
+    « jusqu'à 500 € » (LE chiffre du plan !) ou 3 000 € selon les runs ; avec RAG
+    il répond 1 000 €, franchise 10 €, 2,5 % min 3 € en citant assurance-colis.pdf.
+    Question piège bonus : « colis 75 € cassé sans assurance » → 50 € max, aucune
+    dérogation, réclamation 14 jours, en citant politique-remboursement.pdf.)
+
+   → **Phase 2 terminée.**
 
 ### Phase 3 : agent (étape 3)
 

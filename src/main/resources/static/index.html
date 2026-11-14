@@ -70,10 +70,24 @@
 
   .bulle {
     border-radius: 14px; padding: 11px 15px; font-size: 14.5px; line-height: 1.6;
-    white-space: pre-wrap;
   }
-  .message.utilisateur .bulle { background: var(--violet); color: var(--blanc); border-bottom-right-radius: 4px; }
+  .message.utilisateur .bulle { background: var(--violet); color: var(--blanc); border-bottom-right-radius: 4px; white-space: pre-wrap; }
   .message.assistant .bulle { background: var(--blanc); border: 1px solid #E6E2F2; border-bottom-left-radius: 4px; }
+
+  /* Rendu Markdown des réponses de l'assistant */
+  .bulle h1, .bulle h2, .bulle h3 {
+    font-family: "Sora", sans-serif; color: var(--nuit); line-height: 1.3;
+    margin: 12px 0 6px;
+  }
+  .bulle h1:first-child, .bulle h2:first-child, .bulle h3:first-child, .bulle p:first-child { margin-top: 0; }
+  .bulle h1 { font-size: 17px; border-bottom: 1px solid #E6E2F2; padding-bottom: 5px; }
+  .bulle h2 { font-size: 15.5px; }
+  .bulle h3 { font-size: 14.5px; color: var(--violet); }
+  .bulle p { margin: 7px 0; }
+  .bulle p:last-child, .bulle ul:last-child { margin-bottom: 0; }
+  .bulle ul { margin: 7px 0 7px 4px; padding-left: 16px; }
+  .bulle li { margin: 3px 0; }
+  .bulle strong { font-weight: 600; color: var(--nuit); }
   .attente { color: var(--texte-doux); font-style: italic; }
 
   form {
@@ -128,6 +142,29 @@
   .etat-mode.actif { background: var(--violet-doux); color: var(--violet); }
   .etat-mode.brut { background: #FDF0DC; color: var(--or); }
 
+  /* ---------- Sources citées (étape 10) ---------- */
+  .message.assistant details.sources {
+    margin-top: 6px; font-size: 12px; color: var(--texte-doux);
+    border: 1px solid #EEEAF8; border-radius: 9px; background: var(--blanc);
+  }
+  .message.assistant details.sources summary {
+    cursor: pointer; padding: 7px 11px; font-weight: 500; list-style: none;
+  }
+  .message.assistant details.sources summary::before { content: "▸ "; color: var(--violet); }
+  .message.assistant details.sources[open] summary::before { content: "▾ "; }
+
+  .passage {
+    border-top: 1px solid #EEEAF8; padding: 8px 11px;
+  }
+  .passage-entete {
+    display: flex; justify-content: space-between; gap: 10px; margin-bottom: 4px;
+    font-family: "Sora", sans-serif; font-size: 11px; font-weight: 600; color: var(--violet);
+  }
+  .passage-texte {
+    font-size: 11.5px; line-height: 1.55; color: #4A4365;
+    max-height: 95px; overflow-y: auto; white-space: pre-wrap;
+  }
+
   .effacer {
     font-family: inherit; font-size: 12.5px; font-weight: 500;
     color: var(--texte-doux); background: none;
@@ -143,14 +180,24 @@
     <div class="logo" aria-hidden="true"></div>
     <div>
       <h1>Nova — Assistant</h1>
-      <p>Étape 7 : interrupteur de démo — prompt système on/off</p>
+      <p>Étapes 9-10 : RAG — le corpus est consulté avant chaque réponse</p>
     </div>
     <label class="interrupteur" title="Activer/désactiver le prompt système Nova (identité, périmètre, ton)">
       <span class="etat-mode actif" id="etat-mode">Prompt système actif</span>
       <input type="checkbox" id="prompt-actif" checked>
       <span class="glissiere" aria-hidden="true"></span>
     </label>
-    <button type="button" class="effacer" id="btn-effacer" style="margin-left:12px"
+    <label class="interrupteur" style="margin-left:12px" title="Activer/désactiver la recherche documentaire (RAG) avant chaque réponse">
+      <span class="etat-mode actif" id="etat-rag">RAG actif</span>
+      <input type="checkbox" id="rag-actif" checked>
+      <span class="glissiere" aria-hidden="true"></span>
+    </label>
+    <select id="modele" style="margin-left:12px; font-family:inherit; font-size:12.5px; color:var(--texte-doux); border:1px solid #D9D4E8; border-radius:8px; padding:6px 9px; background:var(--blanc); cursor:pointer;"
+            title="Modèle utilisé pour la génération">
+      <option value="opus">Opus 4.8 — qualité</option>
+      <option value="haiku">Haiku 4.5 — économique</option>
+    </select>
+    <button type="button" class="effacer" id="btn-effacer" style="margin-left:10px"
             title="Vider l'historique envoyé au modèle et repartir de zéro">
       Nouvelle conversation
     </button>
@@ -176,6 +223,45 @@
 <script>
   const $ = (id) => document.getElementById(id);
   let historique = [];   // paires {question, reponse} pour le multi-tours
+
+  /**
+   * Rendu Markdown minimal et sûr : le texte est d'abord échappé (aucun HTML du
+   * modèle n'est interprété), puis on convertit titres (#/##/###), gras, italique,
+   * listes à puces et paragraphes.
+   */
+  function rendreMarkdown(texte) {
+    const echapper = (s) => s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
+    const enLigne = (s) => echapper(s)
+      .replace(/\*\*([^*]+)\*\*/g, "<strong>$1</strong>")
+      .replace(/(^|[^*])\*([^*\n]+)\*(?!\*)/g, "$1<em>$2</em>");
+
+    const blocs = [];
+    let listeEnCours = null;
+    const fermerListe = () => {
+      if (listeEnCours) { blocs.push("<ul>" + listeEnCours.join("") + "</ul>"); listeEnCours = null; }
+    };
+
+    for (const brute of texte.split("\n")) {
+      const ligne = brute.trimEnd();
+      const titre = ligne.match(/^(#{1,3})\s+(.*)$/);
+      const puce = ligne.match(/^[-•]\s+(.*)$/);
+      if (titre) {
+        fermerListe();
+        const niveau = titre[1].length;
+        blocs.push(`<h${niveau}>` + enLigne(titre[2]) + `</h${niveau}>`);
+      } else if (puce) {
+        if (!listeEnCours) listeEnCours = [];
+        listeEnCours.push("<li>" + enLigne(puce[1]) + "</li>");
+      } else if (ligne.trim() === "") {
+        fermerListe();
+      } else {
+        fermerListe();
+        blocs.push("<p>" + enLigne(ligne) + "</p>");
+      }
+    }
+    fermerListe();
+    return blocs.join("");
+  }
 
   function ajouterMessage(role, texte) {
     const vide = $("vide");
@@ -203,13 +289,46 @@
     $("question").focus();
   });
 
-  // Interrupteur de démo : met à jour la pastille d'état
+  // Interrupteurs de démo : mettent à jour les pastilles d'état
   $("prompt-actif").addEventListener("change", () => {
     const actif = $("prompt-actif").checked;
     const etat = $("etat-mode");
     etat.textContent = actif ? "Prompt système actif" : "Mode brut (sans prompt)";
     etat.className = "etat-mode " + (actif ? "actif" : "brut");
   });
+
+  $("rag-actif").addEventListener("change", () => {
+    const actif = $("rag-actif").checked;
+    const etat = $("etat-rag");
+    etat.textContent = actif ? "RAG actif" : "Sans RAG (hallucinations)";
+    etat.className = "etat-mode " + (actif ? "actif" : "brut");
+  });
+
+  // Étape 10 : affiche les passages du corpus cités sous la réponse
+  function ajouterSources(msg, passages) {
+    if (!passages || passages.length === 0) return;
+    const det = document.createElement("details");
+    det.className = "sources";
+    const resume = document.createElement("summary");
+    const docs = [...new Set(passages.map(p => p.document))];
+    resume.textContent = "Sources — " + passages.length + " passages du corpus (" + docs.join(", ") + ")";
+    det.appendChild(resume);
+    passages.forEach(p => {
+      const bloc = document.createElement("div");
+      bloc.className = "passage";
+      const entete = document.createElement("div");
+      entete.className = "passage-entete";
+      const doc = document.createElement("span"); doc.textContent = p.document;
+      const score = document.createElement("span"); score.textContent = "similarité " + (p.score ?? 0).toFixed(3);
+      entete.append(doc, score);
+      const texte = document.createElement("div");
+      texte.className = "passage-texte";
+      texte.textContent = p.texte;
+      bloc.append(entete, texte);
+      det.appendChild(bloc);
+    });
+    msg.appendChild(det);
+  }
 
   $("form-chat").addEventListener("submit", async (e) => {
     e.preventDefault();
@@ -227,11 +346,14 @@
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ question, historique,
-          sansPromptSysteme: !$("prompt-actif").checked }),
+          sansPromptSysteme: !$("prompt-actif").checked,
+          modele: $("modele").value,
+          sansRag: !$("rag-actif").checked }),
       });
       if (!rep.ok) throw new Error("HTTP " + rep.status);
       const d = await rep.json();
-      enCours.querySelector(".bulle").textContent = d.reponse;
+      enCours.querySelector(".bulle").innerHTML = rendreMarkdown(d.reponse);
+      ajouterSources(enCours, d.passages);
       historique.push({ question, reponse: d.reponse });
     } catch (err) {
       enCours.querySelector(".bulle").textContent = "Erreur : " + err.message;

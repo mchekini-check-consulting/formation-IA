@@ -21,11 +21,15 @@ public class ChatController {
     public record RequeteChat(
             @NotBlank(message = "La question est obligatoire") String question,
             List<ChatService.MessageHistorique> historique,
-            Boolean sansPromptSysteme) {}
+            Boolean sansPromptSysteme,
+            String modele,
+            Boolean sansRag) {}
 
     @PostMapping
     public ChatService.ReponseChat chat(@Valid @RequestBody RequeteChat requete) {
         return chatService.repondre(requete.question(), requete.historique(),
-                Boolean.TRUE.equals(requete.sansPromptSysteme()));
+                Boolean.TRUE.equals(requete.sansPromptSysteme()),
+                requete.modele(),
+                Boolean.TRUE.equals(requete.sansRag()));
     }
 }
