@@ -165,6 +165,34 @@
     max-height: 95px; overflow-y: auto; white-space: pre-wrap;
   }
 
+  /* ---------- Actions exécutées par l'agent (étape 12) ---------- */
+  .message.assistant details.actions {
+    margin-top: 6px; font-size: 12px; color: var(--texte-doux);
+    border: 1px solid #F3E3C8; border-radius: 9px; background: #FFFCF5;
+  }
+  .message.assistant details.actions summary {
+    cursor: pointer; padding: 7px 11px; font-weight: 500; list-style: none; color: #8A6410;
+  }
+  .message.assistant details.actions summary::before { content: "▸ "; color: var(--or); }
+  .message.assistant details.actions[open] summary::before { content: "▾ "; }
+
+  .action { border-top: 1px solid #F3E3C8; padding: 8px 11px; }
+  .action-entete {
+    display: flex; align-items: center; gap: 8px; margin-bottom: 4px;
+    font-family: "Sora", sans-serif; font-size: 11px; font-weight: 600;
+  }
+  .action-serveur {
+    background: var(--or); color: var(--blanc); border-radius: 999px;
+    padding: 2px 9px; font-size: 10px; text-transform: uppercase; letter-spacing: 0.04em;
+  }
+  .action-outil { color: #8A6410; font-family: "Spline Sans Mono", monospace; }
+  .action-detail {
+    font-family: "Spline Sans Mono", monospace; font-size: 10.5px; line-height: 1.5;
+    color: #4A4365; white-space: pre-wrap; word-break: break-word;
+    max-height: 90px; overflow-y: auto;
+    background: var(--blanc); border-radius: 6px; padding: 6px 8px; margin-top: 4px;
+  }
+
   .effacer {
     font-family: inherit; font-size: 12.5px; font-weight: 500;
     color: var(--texte-doux); background: none;
@@ -180,7 +208,7 @@
     <div class="logo" aria-hidden="true"></div>
     <div>
       <h1>Nova — Assistant</h1>
-      <p>Étapes 9-10 : RAG — le corpus est consulté avant chaque réponse</p>
+      <p>Phase 3 : agent — l'assistant consulte, agit et escalade via les serveurs MCP</p>
     </div>
     <label class="interrupteur" title="Activer/désactiver le prompt système Nova (identité, périmètre, ton)">
       <span class="etat-mode actif" id="etat-mode">Prompt système actif</span>
@@ -190,6 +218,11 @@
     <label class="interrupteur" style="margin-left:12px" title="Activer/désactiver la recherche documentaire (RAG) avant chaque réponse">
       <span class="etat-mode actif" id="etat-rag">RAG actif</span>
       <input type="checkbox" id="rag-actif" checked>
+      <span class="glissiere" aria-hidden="true"></span>
+    </label>
+    <label class="interrupteur" style="margin-left:12px" title="Activer/désactiver les outils MCP (agent) : tickets, remboursement, notification">
+      <span class="etat-mode actif" id="etat-outils">Outils actifs</span>
+      <input type="checkbox" id="outils-actifs" checked>
       <span class="glissiere" aria-hidden="true"></span>
     </label>
     <select id="modele" style="margin-left:12px; font-family:inherit; font-size:12.5px; color:var(--texte-doux); border:1px solid #D9D4E8; border-radius:8px; padding:6px 9px; background:var(--blanc); cursor:pointer;"
@@ -304,6 +337,44 @@
     etat.className = "etat-mode " + (actif ? "actif" : "brut");
   });
 
+  $("outils-actifs").addEventListener("change", () => {
+    const actif = $("outils-actifs").checked;
+    const etat = $("etat-outils");
+    etat.textContent = actif ? "Outils actifs" : "Sans outils (parole seule)";
+    etat.className = "etat-mode " + (actif ? "actif" : "brut");
+  });
+
+  // Étape 12 : affiche les actions exécutées par l'agent sous la réponse
+  function ajouterActions(msg, actions) {
+    if (!actions || actions.length === 0) return;
+    const det = document.createElement("details");
+    det.className = "actions";
+    det.open = true;
+    const resume = document.createElement("summary");
+    resume.textContent = "Actions exécutées par l'agent — " + actions.length +
+      " appel" + (actions.length > 1 ? "s" : "") + " d'outil";
+    det.appendChild(resume);
+    actions.forEach(a => {
+      const bloc = document.createElement("div");
+      bloc.className = "action";
+      const entete = document.createElement("div");
+      entete.className = "action-entete";
+      const serveur = document.createElement("span");
+      serveur.className = "action-serveur";
+      serveur.textContent = a.serveur;
+      const outil = document.createElement("span");
+      outil.className = "action-outil";
+      outil.textContent = a.outil;
+      entete.append(serveur, outil);
+      const detail = document.createElement("div");
+      detail.className = "action-detail";
+      detail.textContent = "→ " + a.arguments + "\n← " + a.resultat;
+      bloc.append(entete, detail);
+      det.appendChild(bloc);
+    });
+    msg.appendChild(det);
+  }
+
   // Étape 10 : affiche les passages du corpus cités sous la réponse
   function ajouterSources(msg, passages) {
     if (!passages || passages.length === 0) return;
@@ -348,11 +419,13 @@
         body: JSON.stringify({ question, historique,
           sansPromptSysteme: !$("prompt-actif").checked,
           modele: $("modele").value,
-          sansRag: !$("rag-actif").checked }),
+          sansRag: !$("rag-actif").checked,
+          sansOutils: !$("outils-actifs").checked }),
       });
       if (!rep.ok) throw new Error("HTTP " + rep.status);
       const d = await rep.json();
       enCours.querySelector(".bulle").innerHTML = rendreMarkdown(d.reponse);
+      ajouterActions(enCours, d.actions);
       ajouterSources(enCours, d.passages);
       historique.push({ question, reponse: d.reponse });
     } catch (err) {

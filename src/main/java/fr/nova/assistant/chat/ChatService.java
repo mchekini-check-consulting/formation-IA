@@ -2,9 +2,22 @@ package fr.nova.assistant.chat;
 
 import com.anthropic.client.AnthropicClient;
 import com.anthropic.client.okhttp.AnthropicOkHttpClient;
+import com.anthropic.models.messages.ContentBlock;
+import com.anthropic.models.messages.ContentBlockParam;
+import com.anthropic.models.messages.Message;
 import com.anthropic.models.messages.MessageCreateParams;
+import com.anthropic.models.messages.MessageParam;
 import com.anthropic.models.messages.Model;
+import com.anthropic.models.messages.StopReason;
+import com.anthropic.models.messages.TextBlockParam;
+import com.anthropic.models.messages.Tool;
+import com.anthropic.models.messages.ToolResultBlockParam;
+import com.anthropic.models.messages.ToolUseBlockParam;
+import fr.nova.assistant.agent.OutilsMcpService;
+import fr.nova.assistant.agent.OutilsMcpService.ActionExecutee;
+import java.util.ArrayList;
 import java.util.List;
+import java.util.Map;
 import java.util.stream.Collectors;
 import org.springframework.ai.document.Document;
 import org.springframework.ai.vectorstore.SearchRequest;
@@ -12,11 +25,9 @@ import org.springframework.ai.vectorstore.VectorStore;
 import org.springframework.stereotype.Service;
 
 /**
- * Étape 6 du plan : le chat porte désormais le prompt système Nova (identité,
- * périmètre, ton) — introduit après avoir reproduit l'échec SpeedColis du chat brut.
- * Volontairement absent du prompt : les règles métier chiffrées (remboursements,
- * assurance…) — elles arriveront par le RAG en phase 2, après l'hallucination
- * de l'étape 8.
+ * Phase 3 : l'assistant devient un agent. La boucle agentique vit ICI, dans notre
+ * code — le modèle demande des outils (stop_reason = tool_use), nous les exécutons
+ * via les serveurs MCP, et nous renvoyons les résultats jusqu'à la réponse finale.
  */
 @Service
 public class ChatService {
@@ -25,6 +36,16 @@ public class ChatService {
             Tu es l'assistant officiel de Nova, société française de livraison urbaine \
             écologique et premium, implantée à Paris, Lyon et Bordeaux. Sa signature : \
             « Brillamment livré. »
+
+            Ta mission :
+            - Résoudre les demandes des clients de bout en bout en utilisant tes outils : \
+            vérifier le dossier, agir (ticket, remboursement), confirmer au client — dans \
+            le strict respect des règles figurant dans les documents fournis.
+            - Consulte toujours le dossier (commande, tickets, remboursements existants) \
+            avant d'agir ; n'agis jamais deux fois pour le même préjudice.
+            - Tout ce qui dépasse ton cadre (montants au-delà des règles, situations non \
+            prévues par les documents) : n'agis pas, escalade via une notification à \
+            l'équipe MANAGER et explique au client que sa demande est transmise.
 
             Identité — les services Nova :
             - Nova Flash : livraison express en moins de 2 heures en zone urbaine.
@@ -67,15 +88,19 @@ public class ChatService {
             - Utilise des listes à puces (-) pour les énumérations.""";
 
     /** Modèles proposés dans l'interface (le sélecteur resservira au routeur de la phase 6). */
-    private static final java.util.Map<String, String> MODELES = java.util.Map.of(
+    private static final Map<String, String> MODELES = Map.of(
             "opus", "claude-opus-4-8",
             "haiku", "claude-haiku-4-5");
 
+    private static final int MAX_TOURS = 8;
+
     private volatile AnthropicClient client;
     private final VectorStore vectorStore;
+    private final OutilsMcpService outilsMcp;
 
-    public ChatService(VectorStore vectorStore) {
+    public ChatService(VectorStore vectorStore, OutilsMcpService outilsMcp) {
         this.vectorStore = vectorStore;
+        this.outilsMcp = outilsMcp;
     }
 
     public record MessageHistorique(String question, String reponse) {}
@@ -83,27 +108,19 @@ public class ChatService {
     /** Passage du corpus retrouvé par la recherche vectorielle (étape 10 : affiché dans l'UI). */
     public record Passage(String document, String texte, Double score) {}
 
-    public record ReponseChat(String question, String reponse, List<Passage> passages) {}
+    public record ReponseChat(String question, String reponse,
+                              List<Passage> passages, List<ActionExecutee> actions) {}
 
-    /**
-     * @param sansPromptSysteme interrupteur de démo (étape 7) : si vrai, le prompt
-     *        système Nova n'est pas envoyé — le chat redevient le modèle brut de
-     *        l'étape 5, pour rejouer l'avant/après devant les stagiaires.
-     */
-    /**
-     * @param sansRag interrupteur de démo (étape 10) : si vrai, la recherche
-     *        documentaire est désactivée — le modèle répond sans sources, comme
-     *        avant les étapes 9-10 (mode « hallucination »).
-     */
     public ReponseChat repondre(String question, List<MessageHistorique> historique,
-                                boolean sansPromptSysteme, String modele, boolean sansRag) {
+                                boolean sansPromptSysteme, String modele,
+                                boolean sansRag, boolean sansOutils) {
         if (System.getenv("ANTHROPIC_API_KEY") == null || System.getenv("ANTHROPIC_API_KEY").isBlank()) {
             return new ReponseChat(question,
                     "Génération indisponible : la variable d'environnement ANTHROPIC_API_KEY "
-                    + "n'est pas configurée.", List.of());
+                    + "n'est pas configurée.", List.of(), List.of());
         }
 
-        // Étape 10 : recherche des passages du corpus avant chaque réponse
+        // Étape 10 : recherche des passages du corpus avant la réponse
         List<Passage> passages = List.of();
         String messageUtilisateur = question;
         if (!sansRag) {
@@ -114,7 +131,7 @@ public class ChatService {
                             String.valueOf(d.getMetadata().get("document")),
                             d.getText(),
                             d.getScore()))
-                    .collect(Collectors.toList());
+                    .toList();
 
             String contexte = documents.stream()
                     .map(d -> "[Document : " + d.getMetadata().get("document") + "]\n" + d.getText())
@@ -128,27 +145,85 @@ public class ChatService {
                     + "Question du client : " + question;
         }
 
-        MessageCreateParams.Builder params = MessageCreateParams.builder()
-                .model(Model.of(MODELES.getOrDefault(modele, MODELES.get("opus"))))
-                .maxTokens(1024L);
-        if (!sansPromptSysteme) {
-            params.system(PROMPT_SYSTEME);
-        }
-
+        // Construction de la conversation
+        List<MessageParam> conversation = new ArrayList<>();
         if (historique != null) {
             for (MessageHistorique m : historique) {
-                params.addUserMessage(m.question());
-                params.addAssistantMessage(m.reponse());
+                conversation.add(messageTexte(MessageParam.Role.USER, m.question()));
+                conversation.add(messageTexte(MessageParam.Role.ASSISTANT, m.reponse()));
             }
         }
-        params.addUserMessage(messageUtilisateur);
+        conversation.add(messageTexte(MessageParam.Role.USER, messageUtilisateur));
 
-        String reponse = clientAnthropic().messages().create(params.build()).content().stream()
-                .flatMap(block -> block.text().stream())
-                .map(t -> t.text())
-                .collect(Collectors.joining());
+        List<Tool> outils = sansOutils ? List.of() : outilsMcp.outilsPourClaude();
+        List<ActionExecutee> actions = new ArrayList<>();
 
-        return new ReponseChat(question, reponse, passages);
+        // La boucle agentique : tant que le modèle demande des outils, on exécute
+        for (int tour = 0; tour < MAX_TOURS; tour++) {
+            MessageCreateParams.Builder params = MessageCreateParams.builder()
+                    .model(Model.of(MODELES.getOrDefault(
+                            modele == null ? "opus" : modele, MODELES.get("opus"))))
+                    .maxTokens(2048L);
+            if (!sansPromptSysteme) {
+                params.system(PROMPT_SYSTEME);
+            }
+            conversation.forEach(params::addMessage);
+            outils.forEach(params::addTool);
+
+            Message reponse = clientAnthropic().messages().create(params.build());
+
+            boolean demandeOutil = reponse.stopReason()
+                    .map(sr -> sr.equals(StopReason.TOOL_USE)).orElse(false);
+            if (!demandeOutil) {
+                String texte = reponse.content().stream()
+                        .flatMap(b -> b.text().stream())
+                        .map(t -> t.text())
+                        .collect(Collectors.joining());
+                return new ReponseChat(question, texte, passages, actions);
+            }
+
+            // Le modèle demande des outils : on rejoue ses blocs, on exécute, on renvoie
+            List<ContentBlockParam> blocsAssistant = new ArrayList<>();
+            List<ContentBlockParam> resultats = new ArrayList<>();
+            for (ContentBlock bloc : reponse.content()) {
+                bloc.text().ifPresent(t -> blocsAssistant.add(ContentBlockParam.ofText(
+                        TextBlockParam.builder().text(t.text()).build())));
+                bloc.toolUse().ifPresent(tu -> {
+                    blocsAssistant.add(ContentBlockParam.ofToolUse(ToolUseBlockParam.builder()
+                            .id(tu.id())
+                            .name(tu.name())
+                            .input(tu._input())
+                            .build()));
+                    ActionExecutee action = outilsMcp.executer(tu.name(), tu._input());
+                    actions.add(action);
+                    resultats.add(ContentBlockParam.ofToolResult(ToolResultBlockParam.builder()
+                            .toolUseId(tu.id())
+                            .content(action.resultat())
+                            .build()));
+                });
+            }
+            conversation.add(MessageParam.builder()
+                    .role(MessageParam.Role.ASSISTANT)
+                    .contentOfBlockParams(blocsAssistant)
+                    .build());
+            conversation.add(MessageParam.builder()
+                    .role(MessageParam.Role.USER)
+                    .contentOfBlockParams(resultats)
+                    .build());
+        }
+
+        return new ReponseChat(question,
+                "La demande a nécessité trop d'étapes d'outils (limite de sécurité de "
+                + MAX_TOURS + " tours atteinte). Un conseiller va prendre le relais.",
+                passages, actions);
+    }
+
+    private static MessageParam messageTexte(MessageParam.Role role, String texte) {
+        return MessageParam.builder()
+                .role(role)
+                .contentOfBlockParams(List.of(ContentBlockParam.ofText(
+                        TextBlockParam.builder().text(texte).build())))
+                .build();
     }
 
     private AnthropicClient clientAnthropic() {

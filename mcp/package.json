@@ -1,0 +1,15 @@
+{
+  "name": "nova-mcp",
+  "version": "1.0.0",
+  "description": "Serveurs MCP factices de Nova : tickets, remboursement, notification d'équipe",
+  "type": "commonjs",
+  "scripts": {
+    "tickets": "node serveur-tickets.js",
+    "remboursement": "node serveur-remboursement.js",
+    "notification": "node serveur-notification.js"
+  },
+  "dependencies": {
+    "express": "^4.21.0",
+    "pg": "^8.13.0"
+  }
+}
