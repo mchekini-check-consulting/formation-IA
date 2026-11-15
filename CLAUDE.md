@@ -338,7 +338,39 @@ escalader via notification MANAGER tout ce qui dépasse son cadre.
 
 ### Phase 7 : observabilité (étapes 7 et 8)
 
-22. Tracer chaque prompt, document retrouvé et appel d'outil dans Langfuse.
+22. Tracer chaque prompt, document retrouvé et appel d'outil dans Langfuse. ✅
+    (`observabilite/LangfuseService.java` — envoi asynchrone et résilient vers
+    l'API d'ingestion ; si Langfuse tombe, l'assistant continue.)
+    - **Ce qui est tracé** pour chaque `POST /api/chat` : la **trace** `chat-nova`
+      (userId vérifié, question → réponse, métadonnées : modèle, routage,
+      depuisCache, les 3 interrupteurs, nb passages RAG, nb actions outils ;
+      tag = modèle utilisé ou `cache`), un **span** `rag-recherche-pgvector`
+      (documents retrouvés + scores), un **span par outil MCP**
+      `outil-mcp:{nom}` (arguments → résultat, serveur), et la **génération**
+      `generation-claude` (modèle, tokens entrée/sortie, coût en métadonnée) —
+      omise quand la réponse vient du cache Redis (0 appel modèle).
+    - **Où lire le prompt final augmenté** : dans la génération
+      `generation-claude` → Input, deux champs : `promptSysteme` (le prompt
+      effectif, identité de session incluse — ou la mention « interrupteur
+      off ») et `messageUtilisateurAugmente` (les 5 extraits RAG + consigne
+      d'ancrage + question, VERBATIM ce que reçoit le modèle). La question
+      brute, elle, reste sur la trace `chat-nova`. Porté par le record
+      `ReponseChat.promptFinal`, marqué `@JsonIgnore` → jamais dans la réponse
+      API ni dans le cache Redis, seulement dans Langfuse.
+    - **Accès** : UI http://localhost:3002 — compte formateur
+      `formateur@nova-livraison.fr` / `nova123formation` (créé automatiquement
+      au démarrage du conteneur via les variables `LANGFUSE_INIT_*` du
+      docker-compose : org `nova`, projet `nova-assistant`, clés figées
+      `pk-lf-nova` / `sk-lf-nova-secret` → aucune config manuelle).
+    - **Vérification API** : `curl -u pk-lf-nova:sk-lf-nova-secret
+      http://localhost:3002/api/public/traces`.
+    - **Démo validée** (3 traces visibles dans l'UI) : question suivi Marie en
+      auto → tag `claude-haiku-4-5`, 5,4 s, spans RAG + outil + génération ;
+      même question rejouée → tag `cache`, 0,20 s, AUCUNE génération (la
+      preuve visuelle que le cache ne coûte rien) ; dossier litige Sophie en
+      auto → tag `claude-opus-4-8`, 18,7 s, 3 spans outils (commande, tickets,
+      remboursements) + génération 12 746 → 1 341 tokens. L'arbre de la trace
+      EST le schéma « anatomie d'une requête agentique » du deck.
 23. Constituer un jeu d'évals de 20 à 30 questions, dont les 7 pièges de l'histoire.
 24. Automatiser le rejeu des évals à chaque modification (CI).
 25. Scénariser la chute : modifier le prompt, sauter les évals, montrer la
@@ -359,12 +391,23 @@ cd mcp && npm install && for s in tickets remboursement notification rh; do node
 ANTHROPIC_API_KEY=sk-ant-... mvn spring-boot:run       # l'app sur http://localhost:8080
 ```
 
-API : `POST /api/chat` `{question, historique[], sansPromptSysteme?, modele?("opus"|"haiku"), sansRag?}`
-→ `{question, reponse, passages[{document,texte,score}]}` ·
-`GET /api/rag/statut` · `POST /api/rag/ingestion`.
-UI : 2 interrupteurs (prompt système, RAG), sélecteur de modèle, bouton
-« Nouvelle conversation » (vide l'historique multi-tours).
-Commits : `e8b59b6` (Phases 0+1) → `8da07a0` (Phase 2).
+API : `POST /api/chat` (JWT obligatoire) `{question, historique[],
+sansPromptSysteme?, modele?("auto"|"opus"|"haiku"), sansRag?, sansOutils?,
+sansCache?}` → `{question, reponse, passages[], actions[], utilisation
+{tokensEntree, tokensSortie, appelsModele, coutDollars, modele}, routage,
+depuisCache}` · `GET /api/rag/statut` · `POST /api/rag/ingestion` ·
+`GET /api/moi` · `GET/POST /api/validations…` (MANAGER).
+UI (http://localhost:8080) : écran de connexion (4 comptes, mdp `nova123`),
+3 interrupteurs (prompt système, RAG, outils), sélecteur de modèle
+auto/opus/haiku, ligne de coût avec badge ⚡ CACHE, panneau Validations
+(manager), panneau Simulation de coûts. Observabilité : chaque échange est
+tracé dans Langfuse (http://localhost:3002, formateur@nova-livraison.fr /
+nova123formation).
+Commits : `e8b59b6` (P0+P1) → `8da07a0` (P2) → `c685aa7` (P3) → `23f995e`
+(P4) → `78ba17a` (P5) → `18ffcbb` + `594effc` (P6) → `cb4027b` (P7-22).
+Reset état de démo : `DELETE FROM remboursements; DELETE FROM
+demandes_remboursement; UPDATE emails SET traite=FALSE;` +
+`docker exec nova-redis redis-cli FLUSHALL`.
 
 ## Découvertes sur les hallucinations (étape 8 — à réutiliser dans le deck)
 

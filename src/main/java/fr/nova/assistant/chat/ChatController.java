@@ -15,9 +15,12 @@ import org.springframework.web.bind.annotation.RestController;
 public class ChatController {
 
     private final ChatService chatService;
+    private final fr.nova.assistant.observabilite.LangfuseService langfuse;
 
-    public ChatController(ChatService chatService) {
+    public ChatController(ChatService chatService,
+                          fr.nova.assistant.observabilite.LangfuseService langfuse) {
         this.chatService = chatService;
+        this.langfuse = langfuse;
     }
 
     public record RequeteChat(
@@ -41,12 +44,20 @@ public class ChatController {
                 .filter(a -> a.startsWith("ROLE_"))
                 .map(a -> a.substring(5))
                 .toList();
-        return chatService.repondre(requete.question(), requete.historique(),
+        long debut = System.currentTimeMillis();
+        ChatService.ReponseChat reponse = chatService.repondre(
+                requete.question(), requete.historique(),
                 Boolean.TRUE.equals(requete.sansPromptSysteme()),
                 requete.modele(),
                 Boolean.TRUE.equals(requete.sansRag()),
                 Boolean.TRUE.equals(requete.sansOutils()),
                 Boolean.TRUE.equals(requete.sansCache()),
                 jwt.getTokenValue(), utilisateur, roles);
+        // Étape 22 : chaque échange est tracé dans Langfuse (asynchrone)
+        langfuse.tracer(utilisateur, reponse, System.currentTimeMillis() - debut,
+                Boolean.TRUE.equals(requete.sansPromptSysteme()),
+                Boolean.TRUE.equals(requete.sansRag()),
+                Boolean.TRUE.equals(requete.sansOutils()));
+        return reponse;
     }
 }
