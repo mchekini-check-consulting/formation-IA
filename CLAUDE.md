@@ -435,7 +435,8 @@ auto/opus/haiku, ligne de coût avec badge ⚡ CACHE, panneau Validations
 tracé dans Langfuse (http://localhost:3002, formateur@nova-livraison.fr /
 nova123formation).
 Commits : `e8b59b6` (P0+P1) → `8da07a0` (P2) → `c685aa7` (P3) → `23f995e`
-(P4) → `78ba17a` (P5) → `18ffcbb` + `594effc` (P6) → `4ad5aa3` (P7-22).
+(P4) → `78ba17a` (P5) → `18ffcbb` + `594effc` (P6) → `4ad5aa3` (P7-22) →
+`3d50642` (P7-23).
 Reset état de démo : `DELETE FROM remboursements; DELETE FROM
 demandes_remboursement; UPDATE emails SET traite=FALSE;` +
 `docker exec nova-redis redis-cli FLUSHALL`.
