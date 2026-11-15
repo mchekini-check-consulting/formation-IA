@@ -26,7 +26,8 @@ public class ChatController {
             Boolean sansPromptSysteme,
             String modele,
             Boolean sansRag,
-            Boolean sansOutils) {}
+            Boolean sansOutils,
+            Boolean sansCache) {}
 
     @PostMapping
     public ChatService.ReponseChat chat(@Valid @RequestBody RequeteChat requete,
@@ -45,6 +46,7 @@ public class ChatController {
                 requete.modele(),
                 Boolean.TRUE.equals(requete.sansRag()),
                 Boolean.TRUE.equals(requete.sansOutils()),
+                Boolean.TRUE.equals(requete.sansCache()),
                 jwt.getTokenValue(), utilisateur, roles);
     }
 }

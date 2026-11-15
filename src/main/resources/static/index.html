@@ -254,7 +254,8 @@
     </label>
     <select id="modele" style="margin-left:12px; font-family:inherit; font-size:12.5px; color:var(--texte-doux); border:1px solid #D9D4E8; border-radius:8px; padding:6px 9px; background:var(--blanc); cursor:pointer;"
             title="Modèle utilisé pour la génération">
-      <option value="opus">Opus 4.8 — qualité</option>
+      <option value="auto">Auto — routeur</option>
+      <option value="opus" selected>Opus 4.8 — qualité</option>
       <option value="haiku">Haiku 4.5 — économique</option>
     </select>
     <button type="button" class="effacer" id="btn-effacer" style="margin-left:10px"
@@ -667,9 +668,14 @@
         const u = d.utilisation;
         const cout = document.createElement("div");
         cout.style.cssText = "font-family:'Spline Sans Mono',monospace; font-size:10.5px; color:var(--texte-doux); margin-top:5px;";
-        cout.textContent = `${u.modele} · ${u.tokensEntree.toLocaleString("fr-FR")} tokens entrée · `
-          + `${u.tokensSortie.toLocaleString("fr-FR")} sortie · ${u.appelsModele} appel(s) modèle · `
-          + `~$${u.coutDollars.toFixed(4)}`;
+        let texte = d.depuisCache
+          ? `⚡ CACHE REDIS · 0 appel modèle · $0.0000`
+          : `${u.modele} · ${u.tokensEntree.toLocaleString("fr-FR")} tokens entrée · `
+            + `${u.tokensSortie.toLocaleString("fr-FR")} sortie · ${u.appelsModele} appel(s) modèle · `
+            + `~$${u.coutDollars.toFixed(4)}`;
+        if (d.routage && !d.depuisCache) texte += ` · ${d.routage}`;
+        if (d.depuisCache) cout.style.color = "#1E7A4F";
+        cout.textContent = texte;
         enCours.appendChild(cout);
       }
       historique.push({ question, reponse: d.reponse });

@@ -29,8 +29,9 @@ def jeton(utilisateur: str, mot_de_passe: str) -> str:
     return json.load(urllib.request.urlopen(req))["access_token"]
 
 
-def poser_question(jeton_jwt: str, modele: str) -> dict:
-    corps = json.dumps({"question": QUESTION, "historique": [], "modele": modele}).encode()
+def poser_question(jeton_jwt: str, modele: str, sans_cache: bool = True) -> dict:
+    corps = json.dumps({"question": QUESTION, "historique": [], "modele": modele,
+                        "sansCache": sans_cache}).encode()
     req = urllib.request.Request(f"{APP}/api/chat", data=corps, headers={
         "Content-Type": "application/json",
         "Authorization": f"Bearer {jeton_jwt}",
@@ -38,12 +39,53 @@ def poser_question(jeton_jwt: str, modele: str) -> dict:
     return json.load(urllib.request.urlopen(req, timeout=300))
 
 
+def comparer(jwt: str, cible: int) -> None:
+    """Étape 21 : les deux factures côte à côte — avant/après cache + routeur."""
+    print("══════════ FACTURE 1 — architecture naïve (Opus, sans cache) ══════════")
+    base = poser_question(jwt, "opus", sans_cache=True)["utilisation"]
+    cout_naif = base["coutDollars"]
+    print(f"  1 requête mesurée : {base['tokensEntree']:,} tokens entrée · "
+          f"${cout_naif:.4f}".replace(",", " "))
+    facture_naive = cout_naif * cible
+    print(f"  → {cible:,} requêtes × ${cout_naif:.4f} = ${facture_naive:,.2f}\n".replace(",", " "))
+
+    print("══════ FACTURE 2 — architecture optimisée (routeur auto + cache Redis) ══════")
+    premiere = poser_question(jwt, "auto", sans_cache=False)
+    u1 = premiere["utilisation"]
+    if premiere.get("depuisCache"):
+        print("  (cache déjà chaud : 1re requête servie par Redis)")
+        cout_premiere = 0.0
+    else:
+        cout_premiere = u1["coutDollars"]
+        print(f"  1re requête (cache froid)  : {u1['modele']} · ${cout_premiere:.4f}"
+              + (f" · {premiere.get('routage')}" if premiere.get("routage") else ""))
+    suivante = poser_question(jwt, "auto", sans_cache=False)
+    assert suivante.get("depuisCache"), "la 2e requête aurait dû venir du cache !"
+    print(f"  requêtes suivantes          : ⚡ cache Redis · $0.0000")
+    facture_optimisee = cout_premiere  # 1 miss + (cible-1) hits à ~0 $
+    print(f"  → 1 appel modèle + {cible - 1:,} réponses servies par Redis "
+          f"= ${facture_optimisee:,.4f}\n".replace(",", " "))
+
+    print("══════════════════════════ COMPARAISON ══════════════════════════")
+    print(f"  Architecture naïve     : ${facture_naive:>10,.2f}".replace(",", " "))
+    print(f"  Cache + routeur        : ${facture_optimisee:>10,.4f}".replace(",", " "))
+    if facture_optimisee > 0:
+        print(f"  Économie               : {facture_naive / facture_optimisee:,.0f}× "
+              f"(−{(1 - facture_optimisee / facture_naive) * 100:.2f} %)".replace(",", " "))
+
+
 def main() -> None:
     p = argparse.ArgumentParser()
     p.add_argument("--echantillon", type=int, default=5, help="nombre de requêtes réelles mesurées")
     p.add_argument("--cible", type=int, default=2000, help="volumétrie à projeter")
-    p.add_argument("--modele", default="opus", choices=["opus", "haiku"])
+    p.add_argument("--modele", default="opus", choices=["opus", "haiku", "auto"])
+    p.add_argument("--comparer", action="store_true",
+                   help="étape 21 : facture naïve vs facture cache+routeur")
     args = p.parse_args()
+
+    if args.comparer:
+        comparer(jeton("marie.dupont", "nova123"), args.cible)
+        return
 
     print(f"Question simulée : « {QUESTION} »")
     print(f"Modèle : {args.modele} — échantillon : {args.echantillon} requêtes réelles\n")

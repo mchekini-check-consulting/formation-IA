@@ -5,6 +5,10 @@ spring:
     url: jdbc:postgresql://localhost:5432/nova
     username: nova
     password: nova
+  data:
+    redis:
+      host: localhost
+      port: 6379
   security:
     oauth2:
       resourceserver:

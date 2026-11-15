@@ -111,10 +111,32 @@ public class ChatService {
     private volatile AnthropicClient client;
     private final VectorStore vectorStore;
     private final OutilsMcpService outilsMcp;
+    private final org.springframework.data.redis.core.StringRedisTemplate redis;
+    private static final com.fasterxml.jackson.databind.ObjectMapper JSON =
+            new com.fasterxml.jackson.databind.ObjectMapper();
 
-    public ChatService(VectorStore vectorStore, OutilsMcpService outilsMcp) {
+    public ChatService(VectorStore vectorStore, OutilsMcpService outilsMcp,
+                       org.springframework.data.redis.core.StringRedisTemplate redis) {
         this.vectorStore = vectorStore;
         this.outilsMcp = outilsMcp;
+        this.redis = redis;
+    }
+
+    /**
+     * Étape 20 : routeur petit/gros modèle — heuristique déterministe et explicable.
+     * Les questions de suivi simples partent sur Haiku (5× moins cher) ; tout ce qui
+     * touche à un litige, un remboursement ou une analyse part sur Opus.
+     */
+    private static String[] routerModele(String question) {
+        String q = question.toLowerCase();
+        boolean complexe = q.matches(".*(rembours|r[ée]clam|cass[ée]|perdu|endommag|litige|assur|"
+                + "plainte|erreur|probl[èe]me|injuste|pourquoi|email|e-mail|paie|salaire).*");
+        boolean suiviSimple = q.matches(".*(o[ùu] (en )?est|suivi|statut|quand.*(arriv|livr)|"
+                + "d[ée]lai de (retrait|livraison)|point relais|horaire).*");
+        if (!complexe && suiviSimple) {
+            return new String[]{"haiku", "routeur → haiku (question de suivi simple)"};
+        }
+        return new String[]{"opus", "routeur → opus (dossier ou question complexe)"};
     }
 
     public record MessageHistorique(String question, String reponse) {}
@@ -128,16 +150,54 @@ public class ChatService {
 
     public record ReponseChat(String question, String reponse,
                               List<Passage> passages, List<ActionExecutee> actions,
-                              Utilisation utilisation) {}
+                              Utilisation utilisation, String routage, boolean depuisCache) {}
+
+    /** Outils dont l'exécution modifie l'état : un échange qui en contient n'est JAMAIS mis en cache. */
+    private static final java.util.Set<String> OUTILS_ECRITURE = java.util.Set.of(
+            "creer_ticket", "effectuer_remboursement", "marquer_email_traite", "notifier_equipe");
+
+    private static final java.time.Duration TTL_CACHE = java.time.Duration.ofMinutes(10);
 
     public ReponseChat repondre(String question, List<MessageHistorique> historique,
                                 boolean sansPromptSysteme, String modele,
-                                boolean sansRag, boolean sansOutils, String jeton,
-                                String utilisateur, List<String> roles) {
+                                boolean sansRag, boolean sansOutils, boolean sansCache,
+                                String jeton, String utilisateur, List<String> roles) {
         if (System.getenv("ANTHROPIC_API_KEY") == null || System.getenv("ANTHROPIC_API_KEY").isBlank()) {
             return new ReponseChat(question,
                     "Génération indisponible : la variable d'environnement ANTHROPIC_API_KEY "
-                    + "n'est pas configurée.", List.of(), List.of(), null);
+                    + "n'est pas configurée.", List.of(), List.of(), null, null, false);
+        }
+
+        // Étape 20 : routeur petit/gros modèle (sélection « auto » dans l'interface)
+        String routage = null;
+        String modeleDemande = modele == null ? "opus" : modele;
+        if ("auto".equals(modeleDemande)) {
+            String[] decision = routerModele(question);
+            modeleDemande = decision[0];
+            routage = decision[1];
+        }
+
+        // Étape 20 : cache Redis — uniquement pour les questions SANS historique.
+        // La clé inclut l'UTILISATEUR (jamais de réponse partagée entre comptes !)
+        // et la configuration complète de l'échange.
+        String cleCache = null;
+        boolean cachable = !sansCache && (historique == null || historique.isEmpty());
+        if (cachable) {
+            cleCache = "chat:" + utilisateur + ":" + Integer.toHexString(java.util.Objects.hash(
+                    modeleDemande, sansPromptSysteme, sansRag, sansOutils,
+                    question.trim().toLowerCase()));
+            try {
+                String enCache = redis.opsForValue().get(cleCache);
+                if (enCache != null) {
+                    ReponseChat origine = JSON.readValue(enCache, ReponseChat.class);
+                    return new ReponseChat(origine.question(), origine.reponse(),
+                            origine.passages(), origine.actions(),
+                            new Utilisation(0, 0, 0, 0.0, "cache"),
+                            "cache Redis — réponse servie sans aucun appel modèle", true);
+                }
+            } catch (Exception e) {
+                cleCache = null;   // Redis indisponible : on continue sans cache
+            }
         }
 
         // Étape 10 : recherche des passages du corpus avant la réponse
@@ -179,7 +239,7 @@ public class ChatService {
         List<ActionExecutee> actions = new ArrayList<>();
 
         // Étape 19 : télémétrie de consommation, cumulée sur toute la boucle agentique
-        String idModele = MODELES.getOrDefault(modele == null ? "opus" : modele, MODELES.get("opus"));
+        String idModele = MODELES.getOrDefault(modeleDemande, MODELES.get("opus"));
         long tokensEntree = 0, tokensSortie = 0;
         int appelsModele = 0;
 
@@ -213,8 +273,18 @@ public class ChatService {
                         .flatMap(b -> b.text().stream())
                         .map(t -> t.text())
                         .collect(Collectors.joining());
-                return new ReponseChat(question, masquerDonneesPersonnelles(texte), passages, actions,
-                        utilisation(idModele, tokensEntree, tokensSortie, appelsModele));
+                ReponseChat resultat = new ReponseChat(question, masquerDonneesPersonnelles(texte),
+                        passages, actions,
+                        utilisation(idModele, tokensEntree, tokensSortie, appelsModele),
+                        routage, false);
+                // Mise en cache : jamais si l'échange a exécuté une action d'écriture
+                if (cleCache != null && actions.stream()
+                        .noneMatch(a -> OUTILS_ECRITURE.contains(a.outil()))) {
+                    try {
+                        redis.opsForValue().set(cleCache, JSON.writeValueAsString(resultat), TTL_CACHE);
+                    } catch (Exception ignorer) { /* Redis indisponible : tant pis pour le cache */ }
+                }
+                return resultat;
             }
 
             // Le modèle demande des outils : on rejoue ses blocs, on exécute, on renvoie
@@ -251,7 +321,8 @@ public class ChatService {
                 "La demande a nécessité trop d'étapes d'outils (limite de sécurité de "
                 + MAX_TOURS + " tours atteinte). Un conseiller va prendre le relais.",
                 passages, actions,
-                utilisation(idModele, tokensEntree, tokensSortie, appelsModele));
+                utilisation(idModele, tokensEntree, tokensSortie, appelsModele),
+                routage, false);
     }
 
     private static Utilisation utilisation(String idModele, long entree, long sortie, int appels) {

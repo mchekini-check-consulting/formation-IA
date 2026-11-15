@@ -51,6 +51,12 @@
             <version>2.34.0</version>
         </dependency>
 
+        <!-- Étape 20 : cache de réponses Redis -->
+        <dependency>
+            <groupId>org.springframework.boot</groupId>
+            <artifactId>spring-boot-starter-data-redis</artifactId>
+        </dependency>
+
         <!-- Étape 14 : sécurité — validation des jetons JWT émis par Keycloak -->
         <dependency>
             <groupId>org.springframework.boot</groupId>

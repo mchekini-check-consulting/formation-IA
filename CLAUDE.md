@@ -289,8 +289,52 @@ escalader via notification MANAGER tout ce qui dépasse son cadre.
     mesure ; après un run Opus + un run Haiku, bandeau de comparaison automatique
     (« 5,7× moins cher »). Démo type : échantillon 2-3, d'abord Opus puis Haiku
     — coût réel total ≈ 0,20 $.)
-20. Ajouter le cache (Redis) et un routeur petit modèle / gros modèle.
-21. Rejouer le script et comparer les deux factures.
+20. Ajouter le cache (Redis) et un routeur petit modèle / gros modèle. ✅
+    (**Cache Redis** (spring-boot-starter-data-redis, TTL 10 min) : clé =
+    utilisateur + config + question normalisée — l'UTILISATEUR dans la clé est
+    vital (sinon fuite de données inter-comptes par le cache) ; cache uniquement
+    si historique vide (une question en contexte n'est pas une question isolée) ;
+    JAMAIS de mise en cache d'un échange ayant exécuté une action d'écriture
+    (creer_ticket, effectuer_remboursement, marquer_email_traite,
+    notifier_equipe) ; résilient si Redis tombe. Paramètre `sansCache` pour les
+    démos. UI : badge vert « ⚡ CACHE REDIS · $0.0000 ».
+    **Routeur** : option « Auto — routeur » du sélecteur → heuristique
+    déterministe et explicable : suivi simple → Haiku, tout ce qui touche
+    litige/remboursement/paie/analyse → Opus ; la décision est affichée sous la
+    réponse (« routeur → haiku (question de suivi simple) »).)
+21. Rejouer le script et comparer les deux factures. ✅
+    (`scripts/simulation_couts.py --comparer --cible 2000` :
+    - FACTURE 1 — naïve (Opus, sans cache) : 0,0759 $/req × 2 000 = **151,86 $**
+    - FACTURE 2 — optimisée (routeur auto + cache) : 1 appel Haiku (0,0136 $) +
+      1 999 réponses Redis = **0,0136 $**
+    → **11 188× moins cher (−99,99 %)**. Démo UI : question de suivi en mode
+    Auto → ligne « haiku · routeur », puis « Nouvelle conversation » + même
+    question → badge CACHE. Vider le cache avant démo :
+    `docker exec nova-redis redis-cli FLUSHALL`.)
+
+   **Nuances importantes à dire en formation (questions légitimes des stagiaires) :**
+   - *Le routeur n'envoie pas tout vers Haiku* : heuristique déterministe à deux
+     jeux de motifs — signaux de complexité (rembours/réclam/cassé/perdu/litige/
+     assur/paie/pourquoi…) → Opus, PRIORITAIRES sur les signaux de suivi simple
+     (où en est/suivi/statut/point relais…) → Haiku ; défaut en cas de doute =
+     Opus. Limites assumées : une regex se contourne (« mon paquet a disparu » ne
+     matche pas `perdu`). Crans supérieurs possibles : classifieur LLM (Haiku
+     juge, ~0,0003 $/décision, probabiliste) ou cascade avec escalade.
+   - *Le cache Redis et les 2 000 utilisateurs DIFFÉRENTS* : notre démo 11 188×
+     modélise UN utilisateur qui répète — avec 2 000 clients distincts, la clé
+     par utilisateur donne 2 000 ratés. Ce n'est pas un défaut : pour une
+     question personnalisée, le cache inter-utilisateurs est impossible PAR
+     NATURE (2 000 réponses différentes) et la clé par utilisateur est la seule
+     option correcte (anti-fuite). Hiérarchie réelle des économies :
+     1. routeur (×5,7 — marche toujours) ;
+     2. prompt caching API Anthropic (le préfixe commun de ~12k tokens — prompt
+        système + outils — est cacheable côté API ~10× moins cher, pour TOUS les
+        utilisateurs ; ferait tomber « 2 000 clients différents » à ~5-8 $) ;
+     3. cache Redis GLOBAL (clé sans utilisateur) pour les questions FAQ sans
+        outil personnalisé (« quel est le plafond ? ») — évolution possible ;
+     4. cache Redis par utilisateur (répétitions individuelles — notre démo).
+
+   → **Phase 6 terminée.**
 
 ### Phase 7 : observabilité (étapes 7 et 8)
 
