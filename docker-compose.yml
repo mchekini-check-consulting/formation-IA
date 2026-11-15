@@ -25,13 +25,16 @@ services:
   keycloak:
     image: quay.io/keycloak/keycloak:26.0
     container_name: nova-keycloak
-    command: start-dev
+    command: start-dev --import-realm
     environment:
       KC_BOOTSTRAP_ADMIN_USERNAME: admin
       KC_BOOTSTRAP_ADMIN_PASSWORD: admin
       KC_HTTP_PORT: 8080
     ports:
       - "8888:8080"
+    volumes:
+      # Realm "nova" (rôles + comptes de démo) importé au démarrage
+      - ./keycloak:/opt/keycloak/data/import:ro
     restart: unless-stopped
 
   redis:
@@ -55,6 +58,16 @@ services:
       NEXTAUTH_SECRET: nova-formation-secret-nextauth
       SALT: nova-formation-salt
       TELEMETRY_ENABLED: "false"
+      # Étape 22 : initialisation headless — projet et clés connus d'avance
+      LANGFUSE_INIT_ORG_ID: nova
+      LANGFUSE_INIT_ORG_NAME: Nova
+      LANGFUSE_INIT_PROJECT_ID: nova-assistant
+      LANGFUSE_INIT_PROJECT_NAME: Nova Assistant
+      LANGFUSE_INIT_PROJECT_PUBLIC_KEY: pk-lf-nova
+      LANGFUSE_INIT_PROJECT_SECRET_KEY: sk-lf-nova-secret
+      LANGFUSE_INIT_USER_EMAIL: formateur@nova-livraison.fr
+      LANGFUSE_INIT_USER_NAME: Formateur Nova
+      LANGFUSE_INIT_USER_PASSWORD: nova123formation
     ports:
       - "3002:3000"
     depends_on:

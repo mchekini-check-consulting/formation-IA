@@ -1,0 +1,127 @@
+# Étape 24+ — CI/CD : les évals en garde-fou, puis déploiement sur la VM.
+#
+# Secrets à configurer dans le dépôt GitHub (Settings → Secrets → Actions) :
+#   ANTHROPIC_API_KEY   clé API Anthropic (CI : évals ; CD : .env de la VM)
+#   VM_HOTE             adresse de la VM, ex. 2.24.52.226
+#   VM_UTILISATEUR      utilisateur SSH, ex. root
+#   VM_CLE_SSH          clé privée SSH (contenu complet, format OpenSSH)
+name: CI/CD Nova
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:   # déploiement manuel de n'importe quelle branche
+
+jobs:
+  # ───────────────────────── CI : le jeu d'évals ─────────────────────────
+  evals:
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Infrastructure (PostgreSQL, Keycloak, Redis)
+        run: docker compose up -d postgres keycloak redis
+
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "21"
+          cache: maven
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+
+      - name: Serveurs MCP
+        working-directory: mcp
+        run: |
+          npm ci
+          for s in tickets remboursement notification rh; do
+            node serveur-$s.js > /tmp/mcp-$s.log 2>&1 &
+          done
+
+      - name: Attendre Keycloak (realm nova)
+        run: |
+          for i in $(seq 1 60); do
+            curl -sf http://localhost:8888/realms/nova/.well-known/openid-configuration > /dev/null && exit 0
+            sleep 5
+          done
+          echo "Keycloak indisponible" && exit 1
+
+      - name: Application Nova (1er démarrage = embeddings + indexation du corpus)
+        env:
+          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+        run: |
+          mvn -q spring-boot:run > /tmp/nova-app.log 2>&1 &
+          for i in $(seq 1 120); do
+            curl -sf http://localhost:8080/ > /dev/null && exit 0
+            sleep 5
+          done
+          echo "Application indisponible" && tail -50 /tmp/nova-app.log && exit 1
+
+      - name: Rejeu des 26 évals
+        env:
+          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+        run: python3 scripts/rejouer_evals.py --reset --rapport rapport-evals.json
+
+      - name: Rapport d'évals (artefact)
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: rapport-evals
+          path: rapport-evals.json
+          if-no-files-found: ignore
+
+  # ──────────────── CD : déploiement sur la VM (si évals vertes) ────────────────
+  deploiement:
+    needs: evals
+    # push sur main, ou déclenchement manuel — jamais sur une simple PR
+    if: github.event_name == 'workflow_dispatch' || (github.event_name == 'push' && github.ref == 'refs/heads/main')
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    environment: production
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Préparer la connexion SSH
+        env:
+          VM_CLE_SSH: ${{ secrets.VM_CLE_SSH }}
+          VM_HOTE: ${{ secrets.VM_HOTE }}
+        run: |
+          mkdir -p ~/.ssh
+          printf '%s\n' "$VM_CLE_SSH" > ~/.ssh/id_deploiement
+          chmod 600 ~/.ssh/id_deploiement
+          ssh-keyscan -H "$VM_HOTE" >> ~/.ssh/known_hosts 2>/dev/null
+
+      - name: Synchroniser le projet vers /opt/nova
+        env:
+          VM_HOTE: ${{ secrets.VM_HOTE }}
+          VM_UTILISATEUR: ${{ secrets.VM_UTILISATEUR }}
+        run: |
+          rsync -az --delete \
+            -e "ssh -i ~/.ssh/id_deploiement" \
+            --exclude '.env' --exclude '.git' --exclude 'target' \
+            --exclude 'mcp/node_modules' --exclude 'slides' \
+            ./ "$VM_UTILISATEUR@$VM_HOTE:/opt/nova/"
+
+      - name: Déposer le secret et reconstruire la pile
+        env:
+          VM_HOTE: ${{ secrets.VM_HOTE }}
+          VM_UTILISATEUR: ${{ secrets.VM_UTILISATEUR }}
+          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+        run: |
+          ssh -i ~/.ssh/id_deploiement "$VM_UTILISATEUR@$VM_HOTE" \
+            "cd /opt/nova \
+             && printf 'ANTHROPIC_API_KEY=%s\n' '$ANTHROPIC_API_KEY' > .env \
+             && chmod 600 .env \
+             && docker compose -f docker-compose.vm.yml up -d --build"
+
+      - name: Vérifier le déploiement (santé HTTPS)
+        run: |
+          for i in $(seq 1 40); do
+            curl -sf -m 8 https://ia.check-consulting.net/ > /dev/null && { echo "Nova répond ✓"; exit 0; }
+            sleep 5
+          done
+          echo "L'application ne répond pas après déploiement" && exit 1

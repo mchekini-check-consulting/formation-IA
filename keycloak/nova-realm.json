@@ -1,0 +1,115 @@
+{
+  "realm": "nova",
+  "enabled": true,
+  "displayName": "Nova — Assistant IA",
+  "registrationAllowed": false,
+  "roles": {
+    "realm": [
+      {
+        "name": "CLIENT",
+        "description": "Client Nova : suivi de ses commandes et réclamations"
+      },
+      {
+        "name": "LIVREUR",
+        "description": "Livreur : FAQ, tournées, sa propre paie"
+      },
+      {
+        "name": "NOUVELLE_RECRUE",
+        "description": "Salarié en période d'essai : accès restreints"
+      },
+      {
+        "name": "MANAGER",
+        "description": "Manager : paie, arbitrages, administration"
+      }
+    ]
+  },
+  "users": [
+    {
+      "username": "marie.dupont",
+      "email": "marie.dupont@exemple.fr",
+      "firstName": "Marie",
+      "lastName": "Dupont",
+      "enabled": true,
+      "credentials": [
+        {
+          "type": "password",
+          "value": "nova123",
+          "temporary": false
+        }
+      ],
+      "realmRoles": [
+        "CLIENT"
+      ]
+    },
+    {
+      "username": "karim.benali",
+      "email": "karim.benali@nova-livraison.fr",
+      "firstName": "Karim",
+      "lastName": "Benali",
+      "enabled": true,
+      "credentials": [
+        {
+          "type": "password",
+          "value": "nova123",
+          "temporary": false
+        }
+      ],
+      "realmRoles": [
+        "LIVREUR"
+      ]
+    },
+    {
+      "username": "lea.martin",
+      "email": "lea.martin@nova-livraison.fr",
+      "firstName": "Léa",
+      "lastName": "Martin",
+      "enabled": true,
+      "credentials": [
+        {
+          "type": "password",
+          "value": "nova123",
+          "temporary": false
+        }
+      ],
+      "realmRoles": [
+        "NOUVELLE_RECRUE"
+      ]
+    },
+    {
+      "username": "sophie.moreau",
+      "email": "sophie.moreau@nova-livraison.fr",
+      "firstName": "Sophie",
+      "lastName": "Moreau",
+      "enabled": true,
+      "credentials": [
+        {
+          "type": "password",
+          "value": "nova123",
+          "temporary": false
+        }
+      ],
+      "realmRoles": [
+        "MANAGER"
+      ]
+    }
+  ],
+  "clients": [
+    {
+      "clientId": "nova-app",
+      "name": "Application Nova Assistant",
+      "enabled": true,
+      "publicClient": true,
+      "directAccessGrantsEnabled": true,
+      "standardFlowEnabled": true,
+      "redirectUris": [
+        "http://localhost:8080/*",
+        "https://ia.check-consulting.net/*"
+      ],
+      "webOrigins": [
+        "http://localhost:8080",
+        "https://ia.check-consulting.net"
+      ]
+    }
+  ],
+  "sslRequired": "none"
+}

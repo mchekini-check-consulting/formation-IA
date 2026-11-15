@@ -1,0 +1,152 @@
+# Déploiement complet de Nova sur la VM — TOUT en Docker Compose.
+#   docker compose -f docker-compose.vm.yml up -d --build
+# Ports publiés : 8080 (assistant), 8888 (Keycloak), 3002 (Langfuse).
+# PostgreSQL et Redis restent INTERNES au réseau (pas de conflit avec
+# l'ancien projet école qui occupe 80/443/5432 sur l'hôte).
+# Secret : ANTHROPIC_API_KEY dans un fichier .env à côté de ce fichier.
+services:
+
+  postgres:
+    image: pgvector/pgvector:pg16
+    container_name: nova-postgres
+    environment:
+      POSTGRES_DB: nova
+      POSTGRES_USER: nova
+      POSTGRES_PASSWORD: nova
+    ports:
+      # Exposition externe demandée — 5433 côté hôte (5432 est pris par
+      # le PostgreSQL de l'ancien projet école)
+      - "5433:5432"
+    volumes:
+      - nova-data:/var/lib/postgresql/data
+      - ./seed:/docker-entrypoint-initdb.d:ro
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U nova -d nova"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+    restart: unless-stopped
+
+  keycloak:
+    image: quay.io/keycloak/keycloak:26.0
+    container_name: nova-keycloak
+    command: start-dev --import-realm
+    environment:
+      KC_BOOTSTRAP_ADMIN_USERNAME: admin
+      KC_BOOTSTRAP_ADMIN_PASSWORD: admin
+      KC_HTTP_PORT: 8080
+      # Derrière le reverse proxy TLS (kc.check-consulting.net via Caddy) :
+      # honorer X-Forwarded-Proto/Host pour émettre des iss en https
+      KC_PROXY_HEADERS: xforwarded
+    ports:
+      - "8888:8080"
+    volumes:
+      - ./keycloak:/opt/keycloak/data/import:ro
+    restart: unless-stopped
+
+  redis:
+    image: redis:7-alpine
+    container_name: nova-redis
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+    restart: unless-stopped
+
+  langfuse:
+    image: langfuse/langfuse:2
+    container_name: nova-langfuse
+    environment:
+      DATABASE_URL: postgresql://nova:nova@postgres:5432/langfuse
+      NEXTAUTH_URL: http://2.24.52.226:3002
+      NEXTAUTH_SECRET: nova-formation-secret-nextauth
+      SALT: nova-formation-salt
+      TELEMETRY_ENABLED: "false"
+      # Init headless (étape 22) : projet, clés et compte formateur prêts d'avance
+      LANGFUSE_INIT_ORG_ID: nova
+      LANGFUSE_INIT_ORG_NAME: Nova
+      LANGFUSE_INIT_PROJECT_ID: nova-assistant
+      LANGFUSE_INIT_PROJECT_NAME: Nova Assistant
+      LANGFUSE_INIT_PROJECT_PUBLIC_KEY: pk-lf-nova
+      LANGFUSE_INIT_PROJECT_SECRET_KEY: sk-lf-nova-secret
+      LANGFUSE_INIT_USER_EMAIL: formateur@nova-livraison.fr
+      LANGFUSE_INIT_USER_NAME: Formateur Nova
+      LANGFUSE_INIT_USER_PASSWORD: nova123formation
+    ports:
+      - "3002:3000"
+    depends_on:
+      postgres:
+        condition: service_healthy
+    restart: unless-stopped
+
+  mcp-tickets:
+    build: ./mcp
+    container_name: nova-mcp-tickets
+    command: ["node", "serveur-tickets.js"]
+    environment: &mcp-env
+      PG_HOTE: postgres
+      JWKS_URI: http://keycloak:8080/realms/nova/protocol/openid-connect/certs
+    depends_on:
+      postgres:
+        condition: service_healthy
+    restart: unless-stopped
+
+  mcp-remboursement:
+    build: ./mcp
+    container_name: nova-mcp-remboursement
+    command: ["node", "serveur-remboursement.js"]
+    environment: *mcp-env
+    depends_on:
+      postgres:
+        condition: service_healthy
+    restart: unless-stopped
+
+  mcp-notification:
+    build: ./mcp
+    container_name: nova-mcp-notification
+    command: ["node", "serveur-notification.js"]
+    environment: *mcp-env
+    depends_on:
+      postgres:
+        condition: service_healthy
+    restart: unless-stopped
+
+  mcp-rh:
+    build: ./mcp
+    container_name: nova-mcp-rh
+    command: ["node", "serveur-rh.js"]
+    environment: *mcp-env
+    depends_on:
+      postgres:
+        condition: service_healthy
+    restart: unless-stopped
+
+  app:
+    build: .
+    container_name: nova-app
+    environment:
+      ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY}
+      SPRING_DATASOURCE_URL: jdbc:postgresql://postgres:5432/nova
+      # Les clés de signature sont lues en interne ; l'émetteur attendu est
+      # l'URL PUBLIQUE de Keycloak (celle que voit le navigateur)
+      SPRING_SECURITY_OAUTH2_RESOURCESERVER_JWT_JWKSETURI: http://keycloak:8080/realms/nova/protocol/openid-connect/certs
+      SPRING_SECURITY_OAUTH2_RESOURCESERVER_JWT_ISSUERURI: https://kc.check-consulting.net/realms/nova
+      NOVA_LANGFUSE_URL: http://langfuse:3000
+      NOVA_MCP_TICKETS: http://mcp-tickets:7001
+      NOVA_MCP_REMBOURSEMENT: http://mcp-remboursement:7002
+      NOVA_MCP_NOTIFICATION: http://mcp-notification:7003
+      NOVA_MCP_RH: http://mcp-rh:7004
+    ports:
+      - "8080:8080"
+    depends_on:
+      postgres:
+        condition: service_healthy
+      keycloak:
+        condition: service_started
+      mcp-tickets:
+        condition: service_started
+    restart: unless-stopped
+
+volumes:
+  nova-data:

@@ -1,0 +1,7 @@
+target/
+mcp/node_modules/
+slides/
+.git/
+.idea/
+*.log
+.env
