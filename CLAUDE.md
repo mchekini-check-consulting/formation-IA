@@ -347,16 +347,10 @@ coûts) puis en posant la brique qui la corrige.
       L'arbre de la trace EST le schéma « anatomie d'une requête agentique ».)
 23. Constituer un jeu d'évals de 20 à 30 questions, dont les 7 pièges de l'histoire.
 24. Automatiser le rejeu des évals à chaque modification (CI). ✅
-    Deux étages :
-    - **CI locale (la démo)** : hook `.hooks/pre-commit` versionné, installé
-      via `git config core.hooksPath .hooks`. À chaque commit touchant le
-      comportement de l'assistant (src/, mcp/*.js, corpus/, evals/, pom.xml),
-      il rejoue les 26 évals (`--reset`) et BLOQUE le commit si une échoue.
-      Commit purement documentaire → pas de rejeu. Contournements visibles et
-      assumés (matière de l'étape 25) : `git commit --no-verify` ou
-      `SAUTER_EVALS=1 git commit`. Mécanique validée à blanc : clé absente →
-      blocage avec message ; SAUTER_EVALS=1 → passage avec avertissement ;
-      évals en échec → « ÉVALS EN ÉCHEC — commit BLOQUÉ » exit 1.
+    (Le hook pre-commit local, d'abord mis en place et validé — blocage sur
+    évals rouges, contournement SAUTER_EVALS=1 — a été RETIRÉ à la demande :
+    la CI GitHub est l'unique garde-fou. Le filtre « ne rejouer que si le
+    comportement change » a été reporté dans le workflow (paths du push).)
     - **CI/CD distante** : `.github/workflows/ci-cd.yml` — job `evals` (monte
       l'infra compose, serveurs MCP, app, rejoue les 26 évals, rapport en
       artefact) puis job `deploiement` (si évals vertes, sur push main ou

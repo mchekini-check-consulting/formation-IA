@@ -10,6 +10,19 @@ name: CI/CD Nova
 on:
   push:
     branches: [main, feature/phase0-point-de-depart]
+    # Ne déclencher que si le comportement ou le déploiement de l'assistant change
+    paths:
+      - "src/**"
+      - "mcp/**"
+      - "corpus/**"
+      - "evals/**"
+      - "seed/**"
+      - "keycloak/**"
+      - "pom.xml"
+      - "Dockerfile"
+      - "docker-compose*.yml"
+      - "scripts/rejouer_evals.py"
+      - ".github/workflows/**"
   pull_request:
   workflow_dispatch:   # déploiement manuel de n'importe quelle branche
 
