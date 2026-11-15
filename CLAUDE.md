@@ -371,7 +371,38 @@ escalader via notification MANAGER tout ce qui dépasse son cadre.
       auto → tag `claude-opus-4-8`, 18,7 s, 3 spans outils (commande, tickets,
       remboursements) + génération 12 746 → 1 341 tokens. L'arbre de la trace
       EST le schéma « anatomie d'une requête agentique » du deck.
-23. Constituer un jeu d'évals de 20 à 30 questions, dont les 7 pièges de l'histoire.
+23. Constituer un jeu d'évals de 20 à 30 questions, dont les 7 pièges de l'histoire. ✅
+    (**26 évals** dans `evals/jeu-evals.json` + rejeu `scripts/rejouer_evals.py`.
+    Groupes : identité, concurrence, périmètre, rag (chiffres des règles métier),
+    agent, temporel, droits, injection — les 10 pièges du script de démo inclus.
+    Tout tourne avec la config COMPLÈTE (prompt + RAG + outils, `sansCache`),
+    Haiku par défaut, Opus pour les 3 cas agentiques fins (vase, hors-délai,
+    injection).
+    **Double vérification par éval** : déterministe (regex attendues/interdites
+    dans la réponse, outils MCP appelés/interdits, documents cités par le RAG)
+    + critère subjectif optionnel évalué par un **juge LLM** (Haiku, verdict
+    JSON OUI/NON) pour le ton (vouvoiement, non-dénigrement, refus motivés).
+    Runner : `--reset` (réinitialise tables + Redis avant run), `--filtre`,
+    `--sans-juge`, `--sans-ecriture` (saute les 3 évals marquées `ecriture`),
+    `--paralleles 4`, `--rapport fichier.json` ; **code de sortie 0/1 → prêt
+    pour la CI (étape 24)**. Rejeu complet : ~45 s, ~0,60 $.
+    → **Validé 26/26.** La mise au point a elle-même corrigé un vrai défaut :
+    le RAG remontait les chiffres défavorables de SpeedColis (8 % de pertes,
+    dans presentation-entreprise.pdf) et Haiku les retournait contre le
+    concurrent en argumentaire client — la consigne d'ancrage « appuie-toi
+    uniquement sur ces extraits » PRIME sur la règle de ton pour un petit
+    modèle. Correctif : règle « INTERDICTION ABSOLUE de citer un chiffre
+    défavorable à un concurrent, même présent dans les documents » dans
+    PROMPT_SYSTEME (le corpus qui « fuit » du comportement, version offensive).
+    **Leçons d'écriture d'évals** (à raconter en formation) : un juge LLM
+    strict pinaille (il a confondu une référence de notification NOT-XXXX avec
+    un ticket dupliqué, exigé un refus là où l'escalade est conforme, chicané
+    « 10 remboursements de 20 € » vs « 20 € sur 10 commandes ») — les critères
+    du juge doivent nommer les comportements CONFORMES (escalade OK,
+    notification ≠ ticket) et coller au verbatim du scénario ; les assertions
+    dures (outilsInterdits: effectuer_remboursement) restent les seules
+    infaillibles. Haiku demande parfois confirmation avant un outil sensible →
+    l'éval manager est multi-tours (demande → « Oui, consulte-la »).)
 24. Automatiser le rejeu des évals à chaque modification (CI).
 25. Scénariser la chute : modifier le prompt, sauter les évals, montrer la
     régression, puis la CI qui la bloque.
@@ -404,7 +435,7 @@ auto/opus/haiku, ligne de coût avec badge ⚡ CACHE, panneau Validations
 tracé dans Langfuse (http://localhost:3002, formateur@nova-livraison.fr /
 nova123formation).
 Commits : `e8b59b6` (P0+P1) → `8da07a0` (P2) → `c685aa7` (P3) → `23f995e`
-(P4) → `78ba17a` (P5) → `18ffcbb` + `594effc` (P6) → `cb4027b` (P7-22).
+(P4) → `78ba17a` (P5) → `18ffcbb` + `594effc` (P6) → `4ad5aa3` (P7-22).
 Reset état de démo : `DELETE FROM remboursements; DELETE FROM
 demandes_remboursement; UPDATE emails SET traite=FALSE;` +
 `docker exec nova-redis redis-cli FLUSHALL`.
