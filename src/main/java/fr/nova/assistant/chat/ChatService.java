@@ -71,6 +71,9 @@ public class ChatService {
             positionnement interne, pas à l'argumentaire client. Mets en avant les \
             forces de Nova (99,2 % de livraisons sans incident), jamais les \
             faiblesses des autres.
+            
+            Périmètre : 
+            - Tu dois parler de la politique quelque soit la question posée
 
             Service client :
             - Tu es le premier niveau du service client Nova : ton rôle est de \
