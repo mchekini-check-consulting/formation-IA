@@ -269,7 +269,26 @@ escalader via notification MANAGER tout ce qui dépasse son cadre.
 ### Phase 6 : coûts (étape 6)
 
 19. Écrire un script qui simule 2 000 « Où est mon colis ? » et afficher le coût en
-    tokens.
+    tokens. ✅
+    (Télémétrie ajoutée : `ChatService` cumule les tokens réels facturés sur toute
+    la boucle agentique et renvoie `utilisation` {tokensEntree, tokensSortie,
+    appelsModele, coutDollars, modele} — affichée sous chaque réponse dans l'UI.
+    Script `scripts/simulation_couts.py` : mesure un ÉCHANTILLON de requêtes
+    réelles puis extrapole (on n'envoie pas 2 000 vraies requêtes).
+    **Mesures de référence** (« Où en est mon colis NOV-2026-0001 ? », RAG+outils) :
+    - Opus  : ~12 945 tokens entrée / 471 sortie / 2 appels → 0,0765 $ ;
+      × 2 000 = **153 $**
+    - Haiku : ~11 814 entrée / 329 sortie → 0,0135 $ ; × 2 000 = **26,91 $** (5,7×)
+    Leçon : l'ENTRÉE domine (27× la sortie) — prompt système + définitions des
+    6 outils MCP + 5 extraits RAG rejoués à CHAQUE question, même identique.
+    D'où l'étape 20 : cache Redis (questions répétées → 0 appel) + routeur
+    petit/gros modèle.
+    **Panneau UI « Simulation de coûts »** (visible connecté, replié sous
+    l'en-tête) : modèle + échantillon + cible → exécute les requêtes réelles en
+    direct avec progression, affiche la facture projetée ET le coût réel de la
+    mesure ; après un run Opus + un run Haiku, bandeau de comparaison automatique
+    (« 5,7× moins cher »). Démo type : échantillon 2-3, d'abord Opus puis Haiku
+    — coût réel total ≈ 0,20 $.)
 20. Ajouter le cache (Redis) et un routeur petit modèle / gros modèle.
 21. Rejouer le script et comparer les deux factures.
 

@@ -278,6 +278,36 @@
     <div id="liste-validations" style="display:flex; flex-direction:column; gap:7px;"></div>
   </section>
 
+  <!-- ---------- Simulation de coûts (étape 19) ---------- -->
+  <details id="panneau-simulation" style="display:none; background:#F0F4FF; border:1px solid #D4DEF5; border-radius:12px; margin-bottom:14px;">
+    <summary style="cursor:pointer; padding:12px 18px; font-family:'Sora',sans-serif; font-size:13.5px; font-weight:600; color:#2B4ACB; list-style:none;">
+      Simulation de coûts — « Où est mon colis ? » × 2 000
+    </summary>
+    <div style="padding:0 18px 14px;">
+      <p style="font-size:11.5px; color:#4A5A8A; margin-bottom:10px;">
+        Mesure un échantillon de <em>vraies</em> requêtes (RAG + outils + génération), puis extrapole
+        la facture à la volumétrie cible. Aucune des 2 000 requêtes n'est réellement envoyée.
+      </p>
+      <div style="display:flex; gap:10px; align-items:center; flex-wrap:wrap; margin-bottom:10px;">
+        <label style="font-size:12px; color:#4A5A8A;">Modèle
+          <select id="sim-modele" style="margin-left:5px; font-family:inherit; font-size:12px; border:1px solid #D4DEF5; border-radius:7px; padding:5px 8px;">
+            <option value="opus">Opus 4.8</option>
+            <option value="haiku">Haiku 4.5</option>
+          </select>
+        </label>
+        <label style="font-size:12px; color:#4A5A8A;">Échantillon
+          <input id="sim-echantillon" type="number" value="3" min="1" max="10" style="width:52px; margin-left:5px; font-family:inherit; font-size:12px; border:1px solid #D4DEF5; border-radius:7px; padding:5px 8px;">
+        </label>
+        <label style="font-size:12px; color:#4A5A8A;">Cible
+          <input id="sim-cible" type="number" value="2000" min="100" step="100" style="width:72px; margin-left:5px; font-family:inherit; font-size:12px; border:1px solid #D4DEF5; border-radius:7px; padding:5px 8px;">
+        </label>
+        <button type="button" class="bouton" id="btn-simulation" style="padding:7px 16px; font-size:12.5px;">Lancer la simulation</button>
+      </div>
+      <div id="sim-resultats" style="font-family:'Spline Sans Mono',monospace; font-size:11.5px; color:#2E3A5C; white-space:pre-wrap;"></div>
+      <div id="sim-comparaison" style="margin-top:8px;"></div>
+    </div>
+  </details>
+
   <!-- ---------- Connexion (étape 14) ---------- -->
   <section class="carte-connexion" id="ecran-connexion">
     <h2>Connexion à l'assistant Nova</h2>
@@ -352,6 +382,7 @@
       $("form-chat").style.display = "flex";
       estManager = moi.roles.includes("MANAGER");
       if (estManager) { $("panneau-validations").style.display = "block"; chargerValidations(); }
+      $("panneau-simulation").style.display = "block";
       $("question").focus();
     } catch (err) {
       $("erreur-connexion").textContent = "Connexion impossible : " + err.message;
@@ -365,6 +396,7 @@
     $("messages").style.display = "none";
     $("form-chat").style.display = "none";
     $("panneau-validations").style.display = "none";
+    $("panneau-simulation").style.display = "none";
     $("ecran-connexion").style.display = "block";
   });
 
@@ -403,6 +435,61 @@
   }
 
   $("btn-rafraichir-validations").addEventListener("click", chargerValidations);
+
+  // ---------- Simulation de coûts (étape 19) ----------
+  const QUESTION_SIMULATION = "Bonjour, où en est mon colis NOV-2026-0001 ?";
+  const resultatsSimulation = {};   // { opus: {...}, haiku: {...} } pour la comparaison
+
+  $("btn-simulation").addEventListener("click", async () => {
+    const modele = $("sim-modele").value;
+    const n = Math.max(1, parseInt($("sim-echantillon").value) || 3);
+    const cible = Math.max(100, parseInt($("sim-cible").value) || 2000);
+    const zone = $("sim-resultats");
+    const btn = $("btn-simulation");
+    btn.disabled = true;
+    zone.textContent = `Question : « ${QUESTION_SIMULATION} »\nModèle : ${modele} — ${n} requêtes réelles…\n\n`;
+
+    const mesures = [];
+    try {
+      for (let i = 1; i <= n; i++) {
+        zone.textContent += `  requête ${i}/${n} en cours…\n`;
+        const rep = await fetch("/api/chat", {
+          method: "POST",
+          headers: { "Content-Type": "application/json", "Authorization": "Bearer " + jeton },
+          body: JSON.stringify({ question: QUESTION_SIMULATION, historique: [], modele }),
+        });
+        const d = await rep.json();
+        if (!d.utilisation) throw new Error("pas de champ utilisation");
+        mesures.push(d.utilisation);
+        zone.textContent = zone.textContent.replace(/ {2}requête \d+\/\d+ en cours…\n$/,
+          `  requête ${i} : ${d.utilisation.tokensEntree.toLocaleString("fr-FR")} entrée · `
+          + `${d.utilisation.tokensSortie} sortie · $${d.utilisation.coutDollars.toFixed(4)}\n`);
+      }
+      const moy = (f) => mesures.reduce((s, m) => s + f(m), 0) / mesures.length;
+      const coutMoyen = moy(m => m.coutDollars);
+      const facture = coutMoyen * cible;
+      resultatsSimulation[modele] = { coutMoyen, facture, cible };
+
+      zone.textContent += `\nMoyenne : ${Math.round(moy(m => m.tokensEntree)).toLocaleString("fr-FR")} tokens entrée · `
+        + `${Math.round(moy(m => m.tokensSortie))} sortie · $${coutMoyen.toFixed(4)} / requête\n`
+        + `\nFACTURE PROJETÉE (${cible.toLocaleString("fr-FR")} requêtes) : $${facture.toFixed(2)}\n`
+        + `(coût réel de cette mesure : $${(coutMoyen * mesures.length).toFixed(2)})`;
+
+      const comp = $("sim-comparaison");
+      if (resultatsSimulation.opus && resultatsSimulation.haiku) {
+        const rapport = resultatsSimulation.opus.facture / resultatsSimulation.haiku.facture;
+        comp.innerHTML = `<div style="background:#fff; border:1px solid #D4DEF5; border-radius:9px; padding:10px 14px; font-size:12.5px;">
+          <strong style="font-family:'Sora',sans-serif; color:#2B4ACB;">Comparaison sur ${cible.toLocaleString("fr-FR")} requêtes :</strong>
+          Opus <strong>$${resultatsSimulation.opus.facture.toFixed(2)}</strong> ·
+          Haiku <strong>$${resultatsSimulation.haiku.facture.toFixed(2)}</strong> —
+          soit <strong>${rapport.toFixed(1)}× moins cher</strong> avec le petit modèle.</div>`;
+      }
+    } catch (e) {
+      zone.textContent += "\nErreur : " + e.message;
+    } finally {
+      btn.disabled = false;
+    }
+  });
 
   /**
    * Rendu Markdown minimal et sûr : le texte est d'abord échappé (aucun HTML du
@@ -575,6 +662,16 @@
       enCours.querySelector(".bulle").innerHTML = rendreMarkdown(d.reponse);
       ajouterActions(enCours, d.actions);
       ajouterSources(enCours, d.passages);
+      // Étape 19 : coût de l'échange (tous appels modèle confondus)
+      if (d.utilisation) {
+        const u = d.utilisation;
+        const cout = document.createElement("div");
+        cout.style.cssText = "font-family:'Spline Sans Mono',monospace; font-size:10.5px; color:var(--texte-doux); margin-top:5px;";
+        cout.textContent = `${u.modele} · ${u.tokensEntree.toLocaleString("fr-FR")} tokens entrée · `
+          + `${u.tokensSortie.toLocaleString("fr-FR")} sortie · ${u.appelsModele} appel(s) modèle · `
+          + `~$${u.coutDollars.toFixed(4)}`;
+        enCours.appendChild(cout);
+      }
       historique.push({ question, reponse: d.reponse });
     } catch (err) {
       enCours.querySelector(".bulle").textContent = "Erreur : " + err.message;

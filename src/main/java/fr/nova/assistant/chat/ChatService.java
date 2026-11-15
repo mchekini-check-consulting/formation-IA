@@ -101,6 +101,11 @@ public class ChatService {
             "opus", "claude-opus-4-8",
             "haiku", "claude-haiku-4-5");
 
+    /** Tarifs API en dollars par million de tokens {entrée, sortie} (phase 6 : coûts). */
+    private static final Map<String, double[]> TARIFS_PAR_MTOK = Map.of(
+            "claude-opus-4-8", new double[]{5.00, 25.00},
+            "claude-haiku-4-5", new double[]{1.00, 5.00});
+
     private static final int MAX_TOURS = 8;
 
     private volatile AnthropicClient client;
@@ -117,8 +122,13 @@ public class ChatService {
     /** Passage du corpus retrouvé par la recherche vectorielle (étape 10 : affiché dans l'UI). */
     public record Passage(String document, String texte, Double score) {}
 
+    /** Consommation d'un échange complet (étape 19) : cumul de tous les appels modèle. */
+    public record Utilisation(long tokensEntree, long tokensSortie,
+                              int appelsModele, double coutDollars, String modele) {}
+
     public record ReponseChat(String question, String reponse,
-                              List<Passage> passages, List<ActionExecutee> actions) {}
+                              List<Passage> passages, List<ActionExecutee> actions,
+                              Utilisation utilisation) {}
 
     public ReponseChat repondre(String question, List<MessageHistorique> historique,
                                 boolean sansPromptSysteme, String modele,
@@ -127,7 +137,7 @@ public class ChatService {
         if (System.getenv("ANTHROPIC_API_KEY") == null || System.getenv("ANTHROPIC_API_KEY").isBlank()) {
             return new ReponseChat(question,
                     "Génération indisponible : la variable d'environnement ANTHROPIC_API_KEY "
-                    + "n'est pas configurée.", List.of(), List.of());
+                    + "n'est pas configurée.", List.of(), List.of(), null);
         }
 
         // Étape 10 : recherche des passages du corpus avant la réponse
@@ -168,11 +178,15 @@ public class ChatService {
         List<Tool> outils = sansOutils ? List.of() : outilsMcp.outilsPourClaude();
         List<ActionExecutee> actions = new ArrayList<>();
 
+        // Étape 19 : télémétrie de consommation, cumulée sur toute la boucle agentique
+        String idModele = MODELES.getOrDefault(modele == null ? "opus" : modele, MODELES.get("opus"));
+        long tokensEntree = 0, tokensSortie = 0;
+        int appelsModele = 0;
+
         // La boucle agentique : tant que le modèle demande des outils, on exécute
         for (int tour = 0; tour < MAX_TOURS; tour++) {
             MessageCreateParams.Builder params = MessageCreateParams.builder()
-                    .model(Model.of(MODELES.getOrDefault(
-                            modele == null ? "opus" : modele, MODELES.get("opus"))))
+                    .model(Model.of(idModele))
                     .maxTokens(2048L);
             if (!sansPromptSysteme) {
                 // L'identité vient du jeton vérifié par l'application — jamais du prompt
@@ -188,6 +202,9 @@ public class ChatService {
             outils.forEach(params::addTool);
 
             Message reponse = clientAnthropic().messages().create(params.build());
+            tokensEntree += reponse.usage().inputTokens();
+            tokensSortie += reponse.usage().outputTokens();
+            appelsModele++;
 
             boolean demandeOutil = reponse.stopReason()
                     .map(sr -> sr.equals(StopReason.TOOL_USE)).orElse(false);
@@ -196,7 +213,8 @@ public class ChatService {
                         .flatMap(b -> b.text().stream())
                         .map(t -> t.text())
                         .collect(Collectors.joining());
-                return new ReponseChat(question, masquerDonneesPersonnelles(texte), passages, actions);
+                return new ReponseChat(question, masquerDonneesPersonnelles(texte), passages, actions,
+                        utilisation(idModele, tokensEntree, tokensSortie, appelsModele));
             }
 
             // Le modèle demande des outils : on rejoue ses blocs, on exécute, on renvoie
@@ -232,7 +250,14 @@ public class ChatService {
         return new ReponseChat(question,
                 "La demande a nécessité trop d'étapes d'outils (limite de sécurité de "
                 + MAX_TOURS + " tours atteinte). Un conseiller va prendre le relais.",
-                passages, actions);
+                passages, actions,
+                utilisation(idModele, tokensEntree, tokensSortie, appelsModele));
+    }
+
+    private static Utilisation utilisation(String idModele, long entree, long sortie, int appels) {
+        double[] tarifs = TARIFS_PAR_MTOK.getOrDefault(idModele, new double[]{0, 0});
+        double cout = entree / 1_000_000.0 * tarifs[0] + sortie / 1_000_000.0 * tarifs[1];
+        return new Utilisation(entree, sortie, appels, cout, idModele);
     }
 
     /**
