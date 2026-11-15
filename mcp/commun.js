@@ -67,9 +67,12 @@ async function commandeAppartientAuClient(reference, clientId) {
   return r.rowCount > 0;
 }
 
-function demarrerServeur(nomServeur, port, outils) {
+function demarrerServeur(nomServeur, port, outils, routesSupplementaires) {
   const app = express();
   app.use(express.json());
+  if (routesSupplementaires) {
+    routesSupplementaires(app, { authentifier });
+  }
 
   app.get("/outils", (req, res) => {
     res.json(outils.map(({ nom, description, parametres }) => ({ nom, description, parametres })));

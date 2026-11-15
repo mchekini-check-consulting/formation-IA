@@ -235,7 +235,7 @@
     <div class="logo" aria-hidden="true"></div>
     <div>
       <h1>Nova — Assistant</h1>
-      <p>Phase 4 : droits — identité du jeton OAuth, filtrage par rôle côté serveurs MCP</p>
+      <p>Phase 5 : garde-fous — contenu externe filtré, validation humaine, données masquées</p>
     </div>
     <label class="interrupteur" title="Activer/désactiver le prompt système Nova (identité, périmètre, ton)">
       <span class="etat-mode actif" id="etat-mode">Prompt système actif</span>
@@ -266,6 +266,17 @@
       <button type="button" class="effacer" id="btn-deconnexion">Déconnexion</button>
     </div>
   </header>
+
+  <!-- ---------- Validations humaines (étape 18) — visible pour les managers ---------- -->
+  <section id="panneau-validations" style="display:none; background:#FFF8EE; border:1px solid #F3E3C8; border-radius:12px; padding:14px 18px; margin-bottom:14px;">
+    <div style="display:flex; align-items:center; gap:10px; margin-bottom:8px;">
+      <strong style="font-family:'Sora',sans-serif; font-size:13.5px; color:#8A6410;">Validations humaines en attente</strong>
+      <span id="validations-compte" style="font-family:'Spline Sans Mono',monospace; font-size:11px; background:var(--or); color:#fff; border-radius:999px; padding:2px 9px;">0</span>
+      <button type="button" class="effacer" id="btn-rafraichir-validations" style="margin-left:auto">Rafraîchir</button>
+    </div>
+    <p style="font-size:11.5px; color:#8A6410; margin-bottom:8px;">L'agent ne peut qu'<em>enregistrer des demandes</em> — aucun virement ne part sans un clic humain ici. Ces boutons ne sont pas des outils du modèle.</p>
+    <div id="liste-validations" style="display:flex; flex-direction:column; gap:7px;"></div>
+  </section>
 
   <!-- ---------- Connexion (étape 14) ---------- -->
   <section class="carte-connexion" id="ecran-connexion">
@@ -339,6 +350,8 @@
       $("ecran-connexion").style.display = "none";
       $("messages").style.display = "flex";
       $("form-chat").style.display = "flex";
+      estManager = moi.roles.includes("MANAGER");
+      if (estManager) { $("panneau-validations").style.display = "block"; chargerValidations(); }
       $("question").focus();
     } catch (err) {
       $("erreur-connexion").textContent = "Connexion impossible : " + err.message;
@@ -346,13 +359,50 @@
   });
 
   $("btn-deconnexion").addEventListener("click", () => {
-    jeton = null; historique = [];
+    jeton = null; historique = []; estManager = false;
     $("messages").innerHTML = "";
     $("session").style.display = "none";
     $("messages").style.display = "none";
     $("form-chat").style.display = "none";
+    $("panneau-validations").style.display = "none";
     $("ecran-connexion").style.display = "block";
   });
+
+  // ---------- Validations humaines (étape 18) ----------
+  let estManager = false;
+
+  async function chargerValidations() {
+    if (!estManager) return;
+    try {
+      const d = await (await fetch("/api/validations", { headers: { "Authorization": "Bearer " + jeton } })).json();
+      const liste = $("liste-validations");
+      liste.innerHTML = "";
+      $("validations-compte").textContent = d.demandes.length;
+      if (d.demandes.length === 0) {
+        liste.innerHTML = '<span style="font-size:12px; color:#8A6410;">Aucune demande en attente.</span>';
+        return;
+      }
+      d.demandes.forEach((dem) => {
+        const ligne = document.createElement("div");
+        ligne.style.cssText = "display:flex; align-items:center; gap:10px; background:#fff; border:1px solid #F3E3C8; border-radius:8px; padding:8px 12px; font-size:12.5px;";
+        const infos = document.createElement("span");
+        infos.style.flex = "1";
+        infos.innerHTML = `<strong>${dem.reference}</strong> — ${dem.reference_commande} · <strong>${dem.montant} €</strong> · demandé par <code>${dem.demandeur}</code><br><span style="color:var(--texte-doux)">${dem.motif}</span>`;
+        const btnOk = document.createElement("button");
+        btnOk.className = "effacer"; btnOk.textContent = "Valider";
+        btnOk.style.cssText += "color:#1E7A4F; border-color:#1E7A4F;";
+        btnOk.onclick = async () => { await fetch("/api/validations/" + dem.reference + "/valider", { method: "POST", headers: { "Authorization": "Bearer " + jeton } }); chargerValidations(); };
+        const btnKo = document.createElement("button");
+        btnKo.className = "effacer"; btnKo.textContent = "Rejeter";
+        btnKo.style.cssText += "color:#C23A2B; border-color:#C23A2B;";
+        btnKo.onclick = async () => { await fetch("/api/validations/" + dem.reference + "/rejeter", { method: "POST", headers: { "Authorization": "Bearer " + jeton } }); chargerValidations(); };
+        ligne.append(infos, btnOk, btnKo);
+        liste.appendChild(ligne);
+      });
+    } catch (e) { /* silencieux */ }
+  }
+
+  $("btn-rafraichir-validations").addEventListener("click", chargerValidations);
 
   /**
    * Rendu Markdown minimal et sûr : le texte est d'abord échappé (aucun HTML du
@@ -531,6 +581,7 @@
     } finally {
       $("btn").disabled = false;
       $("question").focus();
+      chargerValidations();   // l'agent a pu créer des demandes de remboursement
     }
   });
 </script>
