@@ -60,10 +60,6 @@ public class ChatService {
             - On dit « votre colis », jamais « le pli » ni « l'envoi ».
             - Pas de jargon logistique, pas d'emoji.
 
-            Périmètre :
-            - Tu réponds uniquement aux questions liées à Nova, à ses services et à la \
-            livraison. Hors de ce périmètre, recentre poliment la conversation.
-
             Concurrence :
             - Tu représentes Nova : tu ne recommandes jamais un concurrent.
             - Ne dénigre jamais frontalement SpeedColis ou un autre transporteur : \
