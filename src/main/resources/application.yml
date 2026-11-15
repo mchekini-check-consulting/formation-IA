@@ -5,6 +5,11 @@ spring:
     url: jdbc:postgresql://localhost:5432/nova
     username: nova
     password: nova
+  security:
+    oauth2:
+      resourceserver:
+        jwt:
+          issuer-uri: http://localhost:8888/realms/nova
   ai:
     embedding:
       transformer:

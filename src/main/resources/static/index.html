@@ -200,6 +200,33 @@
     padding: 6px 13px; cursor: pointer;
   }
   .effacer:hover { color: var(--violet); border-color: var(--violet); background: var(--violet-doux); }
+
+  /* ---------- Connexion (étape 14) ---------- */
+  .carte-connexion {
+    max-width: 520px; margin: auto; width: 100%;
+    background: var(--blanc); border: 1px solid #E6E2F2; border-radius: 16px;
+    padding: 26px 28px; box-shadow: 0 2px 8px rgba(24,17,51,.05);
+  }
+  .carte-connexion h2 { font-family: "Sora", sans-serif; font-size: 17px; margin-bottom: 4px; }
+  .carte-connexion .note { font-size: 12.5px; color: var(--texte-doux); margin-bottom: 16px; line-height: 1.5; }
+  .comptes { display: grid; grid-template-columns: 1fr 1fr; gap: 9px; margin-bottom: 14px; }
+  .compte {
+    text-align: left; font-family: inherit; cursor: pointer;
+    background: var(--fond); color: var(--texte);
+    border: 1px solid #E6E2F2; border-radius: 10px;
+    padding: 10px 13px; font-weight: 400; font-size: 13px;
+  }
+  .compte:hover { background: var(--violet-doux); }
+  .compte:hover, .compte.actif { border-color: var(--violet); background: var(--violet-doux); }
+  .compte .nom { font-weight: 600; font-size: 13px; }
+  .compte .role { font-family: "Spline Sans Mono", monospace; font-size: 10px; color: var(--violet); text-transform: uppercase; }
+  .connexion-ligne { display: flex; gap: 8px; }
+  .connexion-ligne input { flex: 1; font-family: inherit; font-size: 13.5px; border: 1px solid #D9D4E8; border-radius: 9px; padding: 10px 13px; }
+  .session { display: none; align-items: center; gap: 8px; margin-left: 12px; }
+  .session .pastille {
+    font-family: "Spline Sans Mono", monospace; font-size: 11px; font-weight: 600;
+    background: var(--nuit); color: var(--blanc); border-radius: 999px; padding: 4px 11px;
+  }
 </style>
 </head>
 <body>
@@ -208,7 +235,7 @@
     <div class="logo" aria-hidden="true"></div>
     <div>
       <h1>Nova — Assistant</h1>
-      <p>Phase 3 : agent — l'assistant consulte, agit et escalade via les serveurs MCP</p>
+      <p>Phase 4 : droits — identité du jeton OAuth, filtrage par rôle côté serveurs MCP</p>
     </div>
     <label class="interrupteur" title="Activer/désactiver le prompt système Nova (identité, périmètre, ton)">
       <span class="etat-mode actif" id="etat-mode">Prompt système actif</span>
@@ -234,9 +261,33 @@
             title="Vider l'historique envoyé au modèle et repartir de zéro">
       Nouvelle conversation
     </button>
+    <div class="session" id="session">
+      <span class="pastille" id="session-user"></span>
+      <button type="button" class="effacer" id="btn-deconnexion">Déconnexion</button>
+    </div>
   </header>
 
-  <div class="messages" id="messages">
+  <!-- ---------- Connexion (étape 14) ---------- -->
+  <section class="carte-connexion" id="ecran-connexion">
+    <h2>Connexion à l'assistant Nova</h2>
+    <p class="note">L'identité n'est plus déclarative : un jeton JWT signé par Keycloak
+      accompagne chaque message <em>et chaque appel d'outil</em>. Choisissez un compte
+      (mot de passe pré-rempli) :</p>
+    <div class="comptes">
+      <button type="button" class="compte" data-u="marie.dupont"><div class="nom">Marie Dupont</div><div class="role">Client</div></button>
+      <button type="button" class="compte" data-u="karim.benali"><div class="nom">Karim Benali</div><div class="role">Livreur</div></button>
+      <button type="button" class="compte" data-u="lea.martin"><div class="nom">Léa Martin</div><div class="role">Nouvelle recrue</div></button>
+      <button type="button" class="compte" data-u="sophie.moreau"><div class="nom">Sophie Moreau</div><div class="role">Manager</div></button>
+    </div>
+    <form class="connexion-ligne" id="form-connexion">
+      <input type="text" id="login-user" placeholder="utilisateur" autocomplete="username" required>
+      <input type="password" id="login-mdp" placeholder="mot de passe" autocomplete="current-password" required>
+      <button class="bouton" type="submit" style="padding:10px 18px">Se connecter</button>
+    </form>
+    <div class="erreur" id="erreur-connexion" style="color:var(--rouge, #C23A2B); font-size:12.5px; margin-top:8px;"></div>
+  </section>
+
+  <div class="messages" id="messages" style="display:none">
     <div class="vide" id="vide">
       <strong>Basculez l'interrupteur en haut à droite pour la démo.</strong><br>
       Prompt système <em>actif</em> : l'assistant est Nova (identité, périmètre, ton).<br>
@@ -245,7 +296,7 @@
     </div>
   </div>
 
-  <form id="form-chat">
+  <form id="form-chat" style="display:none">
     <input type="text" id="question" placeholder="Votre message…" autocomplete="off" required>
     <button type="submit" id="btn">Envoyer</button>
   </form>
@@ -256,6 +307,52 @@
 <script>
   const $ = (id) => document.getElementById(id);
   let historique = [];   // paires {question, reponse} pour le multi-tours
+  let jeton = null;      // JWT Keycloak — étape 14
+
+  // ---------- Connexion (étape 14) ----------
+  const KEYCLOAK_TOKEN_URL = "http://localhost:8888/realms/nova/protocol/openid-connect/token";
+
+  document.querySelectorAll(".compte").forEach(c => c.addEventListener("click", () => {
+    document.querySelectorAll(".compte").forEach(x => x.classList.remove("actif"));
+    c.classList.add("actif");
+    $("login-user").value = c.dataset.u;
+    $("login-mdp").value = "nova123";   // mot de passe de démo (documenté dans le README)
+  }));
+
+  $("form-connexion").addEventListener("submit", async (e) => {
+    e.preventDefault();
+    $("erreur-connexion").textContent = "";
+    try {
+      const rep = await fetch(KEYCLOAK_TOKEN_URL, {
+        method: "POST",
+        headers: { "Content-Type": "application/x-www-form-urlencoded" },
+        body: new URLSearchParams({
+          client_id: "nova-app", grant_type: "password",
+          username: $("login-user").value.trim(), password: $("login-mdp").value,
+        }),
+      });
+      if (!rep.ok) throw new Error("identifiants invalides (HTTP " + rep.status + ")");
+      jeton = (await rep.json()).access_token;
+      const moi = await (await fetch("/api/moi", { headers: { "Authorization": "Bearer " + jeton } })).json();
+      $("session-user").textContent = moi.username + " · " + moi.roles.join(", ");
+      $("session").style.display = "flex";
+      $("ecran-connexion").style.display = "none";
+      $("messages").style.display = "flex";
+      $("form-chat").style.display = "flex";
+      $("question").focus();
+    } catch (err) {
+      $("erreur-connexion").textContent = "Connexion impossible : " + err.message;
+    }
+  });
+
+  $("btn-deconnexion").addEventListener("click", () => {
+    jeton = null; historique = [];
+    $("messages").innerHTML = "";
+    $("session").style.display = "none";
+    $("messages").style.display = "none";
+    $("form-chat").style.display = "none";
+    $("ecran-connexion").style.display = "block";
+  });
 
   /**
    * Rendu Markdown minimal et sûr : le texte est d'abord échappé (aucun HTML du
@@ -415,7 +512,8 @@
     try {
       const rep = await fetch("/api/chat", {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
+        headers: { "Content-Type": "application/json",
+                   "Authorization": "Bearer " + jeton },
         body: JSON.stringify({ question, historique,
           sansPromptSysteme: !$("prompt-actif").checked,
           modele: $("modele").value,

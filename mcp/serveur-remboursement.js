@@ -3,7 +3,24 @@
  * Volontairement NAÏF en phase 3 : aucun plafond, aucun contrôle de droits —
  * c'est la matière des démos d'échec, corrigées en phases 4 et 5.
  */
-const { demarrerServeur, pool } = require("./commun");
+const { demarrerServeur, pool, profilUtilisateur, commandeAppartientAuClient, accesRefuse } = require("./commun");
+
+/** Étape 15 : CLIENT -> uniquement ses commandes ; MANAGER -> tout ; autres -> refus. */
+async function controlerAcces(reference, utilisateur) {
+  if (utilisateur.roles.includes("MANAGER")) return;
+  const profil = await profilUtilisateur(utilisateur.username);
+  if (profil == null || profil.client_id == null) {
+    throw accesRefuse(
+      "Accès refusé : les remboursements sont réservés au client concerné et aux managers. "
+      + `Le compte authentifié « ${utilisateur.username} » (rôles : ${utilisateur.roles.join(", ")}) `
+      + "n'est pas un compte client.");
+  }
+  if (!(await commandeAppartientAuClient(reference, profil.client_id))) {
+    throw accesRefuse(
+      `Accès refusé : la commande ${reference} n'appartient pas au compte authentifié `
+      + `« ${utilisateur.username} ».`);
+  }
+}
 
 const pret = pool.query(`
   CREATE TABLE IF NOT EXISTS remboursements (
@@ -28,7 +45,8 @@ const outils = [
       },
       required: ["reference_commande"],
     },
-    executer: async ({ reference_commande }) => {
+    executer: async ({ reference_commande }, utilisateur) => {
+      await controlerAcces(reference_commande, utilisateur);
       await pret;
       const r = await pool.query(
         `SELECT reference_virement, montant, motif, date_execution
@@ -51,7 +69,8 @@ const outils = [
       },
       required: ["reference_commande", "montant", "motif"],
     },
-    executer: async ({ reference_commande, montant, motif }) => {
+    executer: async ({ reference_commande, montant, motif }, utilisateur) => {
+      await controlerAcces(reference_commande, utilisateur);
       await pret;
       const c = await pool.query("SELECT id FROM commandes WHERE reference = $1", [reference_commande]);
       if (c.rowCount === 0) throw new Error(`Commande introuvable : ${reference_commande}`);

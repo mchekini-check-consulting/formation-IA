@@ -38,11 +38,13 @@ public class OutilsMcpService {
     public OutilsMcpService(
             @Value("${nova.mcp.tickets:http://localhost:7001}") String urlTickets,
             @Value("${nova.mcp.remboursement:http://localhost:7002}") String urlRemboursement,
-            @Value("${nova.mcp.notification:http://localhost:7003}") String urlNotification) {
+            @Value("${nova.mcp.notification:http://localhost:7003}") String urlNotification,
+            @Value("${nova.mcp.rh:http://localhost:7004}") String urlRh) {
         this.serveurs = Map.of(
                 "tickets", urlTickets,
                 "remboursement", urlRemboursement,
-                "notification", urlNotification);
+                "notification", urlNotification,
+                "rh", urlRh);
     }
 
     /** Interroge chaque serveur MCP et reconstruit le registre des outils. */
@@ -99,8 +101,12 @@ public class OutilsMcpService {
         return outils;
     }
 
-    /** Exécute un outil sur son serveur MCP et renvoie la trace complète. */
-    public ActionExecutee executer(String nomOutil, JsonValue arguments) {
+    /**
+     * Exécute un outil sur son serveur MCP et renvoie la trace complète.
+     * Étape 14 : le jeton JWT de l'utilisateur est propagé au serveur — c'est LUI
+     * qui porte l'identité, pas ce que l'utilisateur raconte dans le prompt.
+     */
+    public ActionExecutee executer(String nomOutil, JsonValue arguments, String jeton) {
         DefinitionOutil def = registre().get(nomOutil);
         String args;
         try {
@@ -116,10 +122,14 @@ public class OutilsMcpService {
             String resultat = http.post()
                     .uri(def.urlBase() + "/outils/" + nomOutil)
                     .header("Content-Type", "application/json")
+                    .header("Authorization", "Bearer " + jeton)
                     .body(args)
                     .retrieve()
                     .body(String.class);
             return new ActionExecutee(def.serveur(), nomOutil, args, resultat);
+        } catch (org.springframework.web.client.RestClientResponseException e) {
+            // Refus du serveur MCP (401/403…) : on transmet son message au modèle tel quel
+            return new ActionExecutee(def.serveur(), nomOutil, args, e.getResponseBodyAsString());
         } catch (Exception e) {
             return new ActionExecutee(def.serveur(), nomOutil, args,
                     "{\"erreur\": \"" + e.getMessage().replace("\"", "'") + "\"}");

@@ -1,5 +1,25 @@
-/** Serveur MCP « tickets » — consultation des commandes et gestion des réclamations. */
-const { demarrerServeur, pool } = require("./commun");
+/**
+ * Serveur MCP « tickets » — consultation des commandes et gestion des réclamations.
+ * Étape 15 : filtrage par rôle sur l'identité vérifiée du jeton — un CLIENT
+ * n'accède qu'à SES commandes, un MANAGER à tout, les autres rôles à rien.
+ */
+const { demarrerServeur, pool, profilUtilisateur, commandeAppartientAuClient, accesRefuse } = require("./commun");
+
+async function controlerAcces(reference, utilisateur) {
+  if (utilisateur.roles.includes("MANAGER")) return;
+  const profil = await profilUtilisateur(utilisateur.username);
+  if (profil == null || profil.client_id == null) {
+    throw accesRefuse(
+      "Accès refusé : les dossiers de commande sont réservés au client concerné et aux managers. "
+      + `Le compte authentifié « ${utilisateur.username} » (rôles : ${utilisateur.roles.join(", ")}) `
+      + "n'est pas un compte client.");
+  }
+  if (!(await commandeAppartientAuClient(reference, profil.client_id))) {
+    throw accesRefuse(
+      `Accès refusé : la commande ${reference} n'appartient pas au compte authentifié `
+      + `« ${utilisateur.username} ».`);
+  }
+}
 
 const outils = [
   {
@@ -15,7 +35,8 @@ const outils = [
       },
       required: ["reference"],
     },
-    executer: async ({ reference }) => {
+    executer: async ({ reference }, utilisateur) => {
+      await controlerAcces(reference, utilisateur);
       const r = await pool.query(
         `SELECT c.reference, c.service, c.statut, c.valeur_declaree, c.assurance_protect,
                 c.prix_transport, c.adresse_livraison, c.date_commande, c.date_livraison,
@@ -49,7 +70,8 @@ const outils = [
       },
       required: ["reference_commande"],
     },
-    executer: async ({ reference_commande }) => {
+    executer: async ({ reference_commande }, utilisateur) => {
+      await controlerAcces(reference_commande, utilisateur);
       const r = await pool.query(
         `SELECT t.reference, t.motif, t.statut, t.description, t.montant_demande,
                 t.montant_accorde, t.date_ouverture, t.date_cloture
@@ -73,7 +95,8 @@ const outils = [
       },
       required: ["reference_commande", "motif", "description"],
     },
-    executer: async ({ reference_commande, motif, description, montant_demande }) => {
+    executer: async ({ reference_commande, motif, description, montant_demande }, utilisateur) => {
+      await controlerAcces(reference_commande, utilisateur);
       const c = await pool.query("SELECT id FROM commandes WHERE reference = $1", [reference_commande]);
       if (c.rowCount === 0) throw new Error(`Commande introuvable : ${reference_commande}`);
       const n = await pool.query("SELECT count(*)::int AS nb FROM tickets");

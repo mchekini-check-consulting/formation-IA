@@ -29,7 +29,9 @@ const outils = [
       },
       required: ["equipe", "sujet", "message"],
     },
-    executer: async ({ equipe, sujet, message, urgence }) => {
+    executer: async ({ equipe, sujet, message, urgence }, utilisateur) => {
+      // Traçabilité : l'émetteur vérifié (jeton) est consigné dans la notification
+      message = `[émis via l'assistant par ${utilisateur.username}] ` + message;
       await pret;
       const n = await pool.query("SELECT count(*)::int AS nb FROM notifications");
       const reference = `NOT-2026-${String(n.rows[0].nb + 1).padStart(4, "0")}`;
